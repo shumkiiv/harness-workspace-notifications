@@ -6,7 +6,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const compiler = 'C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 const icon = path.join(root, 'assets', 'icons', 'harness-tasks.ico')
 const native = path.join(root, 'native')
-const providerLogos = ['deepseek.png', 'codex.png', 'zai-light.png', 'zai-dark.png']
+const providerLogos = ['deepseek', 'codex', 'zai', 'generic']
+  .flatMap(brand => ['light', 'dark'].map(theme => brand + '-' + theme + '.png'))
 const args = [
   '/nologo', '/target:winexe', '/langversion:5', '/codepage:65001',
   '/win32icon:' + icon, '/resource:' + icon + ',HarnessTasks.ico',

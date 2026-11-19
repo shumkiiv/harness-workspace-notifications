@@ -459,10 +459,10 @@ public sealed class LimitsPanel : Control
     private const int RowHeight = 18;
     private const int ProviderTextLeft = 27;
     private static readonly CultureInfo AmountCulture = CultureInfo.GetCultureInfo("ru-RU");
-    private static readonly Image DeepSeekLogo = LoadProviderLogo("deepseek.png");
-    private static readonly Image CodexLogo = LoadProviderLogo("codex.png");
-    private static readonly Image ZaiLightLogo = LoadProviderLogo("zai-light.png");
-    private static readonly Image ZaiDarkLogo = LoadProviderLogo("zai-dark.png");
+    private static readonly Image[] DeepSeekBadges = LoadProviderBadges("deepseek");
+    private static readonly Image[] CodexBadges = LoadProviderBadges("codex");
+    private static readonly Image[] ZaiBadges = LoadProviderBadges("zai");
+    private static readonly Image[] GenericBadges = LoadProviderBadges("generic");
     private const TextFormatFlags CompactText = TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis
         | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
     private List<Dictionary<string, object>> providers = new List<Dictionary<string, object>>();
@@ -508,7 +508,8 @@ public sealed class LimitsPanel : Control
             int top = FirstRowTop;
             foreach (Dictionary<string, object> provider in providers)
             {
-                DrawProviderLogo(graphics, Field(provider, "id"), top);
+                Image badge = ProviderBadge(Field(provider, "id"), ProviderName(provider));
+                if (badge != null) graphics.DrawImage(badge, new Rectangle(6, top, 18, 18));
                 TextRenderer.DrawText(graphics, ProviderName(provider), detail,
                     new Rectangle(ProviderTextLeft, top, dataLeft - ProviderTextLeft - 5, RowHeight),
                     Graphite.Primary, CompactText | TextFormatFlags.VerticalCenter);
@@ -569,7 +570,11 @@ public sealed class LimitsPanel : Control
         if (label == "OpenAI Codex") return "Codex";
         return label.Length == 0 ? Field(provider, "id") : label;
     }
-    private static Image LoadProviderLogo(string filename)
+    private static Image[] LoadProviderBadges(string brand)
+    {
+        return new[] { LoadProviderBadge(brand + "-light.png"), LoadProviderBadge(brand + "-dark.png") };
+    }
+    private static Image LoadProviderBadge(string filename)
     {
         using (Stream stream = typeof(LimitsPanel).Assembly.GetManifestResourceStream("Providers." + filename))
         {
@@ -577,20 +582,17 @@ public sealed class LimitsPanel : Control
             using (Image source = Image.FromStream(stream)) return new Bitmap(source);
         }
     }
-    private static void DrawProviderLogo(Graphics graphics, string id, int top)
+    internal static Image ProviderBadge(string id, string label)
     {
-        Image logo = null;
-        if (id == "deepseek" || id == "deepseek-account") logo = DeepSeekLogo;
-        else if (id == "openai-codex") logo = CodexLogo;
-        else if (id == "zai" || id.StartsWith("zai-", StringComparison.Ordinal))
-            logo = Graphite.IsDark ? ZaiDarkLogo : ZaiLightLogo;
-        if (logo != null)
-        {
-            graphics.DrawImage(logo, new Rectangle(6, top + 1, 16, 16));
-            return;
-        }
-        using (Brush marker = new SolidBrush(Graphite.Secondary))
-            graphics.FillEllipse(marker, new Rectangle(11, top + 6, 6, 6));
+        string route = id.Trim().ToLowerInvariant();
+        string name = label.Trim().ToLowerInvariant();
+        int theme = Graphite.IsDark ? 1 : 0;
+        if (route == "deepseek" || route.StartsWith("deepseek-", StringComparison.Ordinal)
+            || name == "deepseek" || name == "deepseek account") return DeepSeekBadges[theme];
+        if (route == "openai-codex" || name == "openai codex" || name == "codex") return CodexBadges[theme];
+        if (route == "zai" || route.StartsWith("zai-", StringComparison.Ordinal)
+            || name == "z.ai" || name == "z.ai coding") return ZaiBadges[theme];
+        return GenericBadges[theme];
     }
     private static string DisplayAmount(string balance, bool compact)
     {
@@ -2019,8 +2021,15 @@ public sealed class DshNotifyGui : Form
             + "{\"id\":\"running\",\"title\":\"Alpha 2\",\"status\":\"running\"}]}");
         bool rowsReplaced = gui.rows.Controls.Count == 1 && HasText(gui.rows, "Alpha 2");
         gui.Dispose();
+        Image deepSeekBadge = LimitsPanel.ProviderBadge("deepseek-account", "DeepSeek Account");
+        Image codexBadge = LimitsPanel.ProviderBadge("openai-codex", "Codex");
+        Image zaiBadge = LimitsPanel.ProviderBadge("local-z-route", "Z.ai Coding");
+        Image genericBadge = LimitsPanel.ProviderBadge("other", "Другой ИИ");
+        bool providerBadgeAliases = deepSeekBadge != null && codexBadge != null && zaiBadge != null && genericBadge != null
+            && deepSeekBadge == LimitsPanel.ProviderBadge("configured-api-route", "DeepSeek")
+            && new[] { deepSeekBadge, codexBadge, zaiBadge, genericBadge }.Distinct().Count() == 4;
         bool passed = checkbox && position && clamp && settingsRoundTrip && newSettings && iconDrawn
-            && taskIconConsistent && countdown && taskTitle && moveEmitted && moveStored;
+            && taskIconConsistent && providerBadgeAliases && countdown && taskTitle && moveEmitted && moveStored;
         passed = passed && noEcho && allRowsShown && allNoticesShown && interactionIds && registeredIdleFiltered;
         passed = passed && matrix && fieldsHidden && rowsReplaced && compactToggle && noticePresentation
             && completedRowFirst && completedNoticeFirst && noticeHeightAndWidth && fixedWidgetWidth && wholeCardScroll;
@@ -2032,6 +2041,7 @@ public sealed class DshNotifyGui : Form
             + ",\"newSettings\":" + JsonBool(newSettings)
             + ",\"iconDrawn\":" + JsonBool(iconDrawn)
             + ",\"taskIconConsistent\":" + JsonBool(taskIconConsistent)
+            + ",\"providerBadgeAliases\":" + JsonBool(providerBadgeAliases)
             + ",\"countdown\":" + JsonBool(countdown)
             + ",\"taskTitle\":" + JsonBool(taskTitle)
             + ",\"moveEmitted\":" + JsonBool(moveEmitted)
