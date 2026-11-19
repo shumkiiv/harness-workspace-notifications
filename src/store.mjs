@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   ShowWidget: true,
   ShowNotifications: true,
   NotificationSound: false,
+  NotificationSoundPreset: 'icq',
   SubagentNotices: false,
   FieldWorkspace: true,
   FieldTask: true,
@@ -38,12 +39,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
 const BOOLEAN_KEYS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === 'boolean')
 const NUMBER_KEYS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === 'number')
 const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i
+const SOUND_PRESETS = new Set(['icq', 'boing', 'squeak', 'whistle', 'pop', 'scratch'])
 
 export function normalizeSettings(value) {
   const input = value && typeof value === 'object' ? value : {}
   const settings = { ...DEFAULT_SETTINGS }
   for (const key of BOOLEAN_KEYS) if (typeof input[key] === 'boolean') settings[key] = input[key]
   for (const key of NUMBER_KEYS) if (Number.isInteger(input[key])) settings[key] = input[key]
+  if (SOUND_PRESETS.has(input.NotificationSoundPreset)) settings.NotificationSoundPreset = input.NotificationSoundPreset
   if (Array.isArray(input.HiddenLimitProviders)) {
     settings.HiddenLimitProviders = [...new Set(input.HiddenLimitProviders
       .filter((id) => typeof id === 'string' && PROVIDER_ID.test(id)))].slice(0, 32)
