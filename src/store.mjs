@@ -15,6 +15,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   FieldPath: true,
   WidgetCounts: true,
   CompactWidget: true,
+  WidgetScale: 'medium',
+  WidgetTopMost: false,
   CompactWorkspaceList: false,
   InlineTaskTime: false,
   ThemeDark: true,
@@ -40,6 +42,7 @@ const BOOLEAN_KEYS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAUL
 const NUMBER_KEYS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === 'number')
 const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 const SOUND_PRESETS = new Set(['icq', 'boing', 'squeak', 'whistle', 'pop', 'scratch'])
+const WIDGET_SCALES = new Set(['small', 'medium', 'large'])
 
 export function normalizeSettings(value) {
   const input = value && typeof value === 'object' ? value : {}
@@ -47,6 +50,7 @@ export function normalizeSettings(value) {
   for (const key of BOOLEAN_KEYS) if (typeof input[key] === 'boolean') settings[key] = input[key]
   for (const key of NUMBER_KEYS) if (Number.isInteger(input[key])) settings[key] = input[key]
   if (SOUND_PRESETS.has(input.NotificationSoundPreset)) settings.NotificationSoundPreset = input.NotificationSoundPreset
+  if (WIDGET_SCALES.has(input.WidgetScale)) settings.WidgetScale = input.WidgetScale
   if (Array.isArray(input.HiddenLimitProviders)) {
     settings.HiddenLimitProviders = [...new Set(input.HiddenLimitProviders
       .filter((id) => typeof id === 'string' && PROVIDER_ID.test(id)))].slice(0, 32)

@@ -109,6 +109,8 @@ public class Settings
     public bool StatusUnknown { get; set; }
     public bool StatusDisposed { get; set; }
     public bool CompactWidget { get; set; }
+    public string WidgetScale { get; set; }
+    public bool WidgetTopMost { get; set; }
     public bool CompactWorkspaceList { get; set; }
     public bool InlineTaskTime { get; set; }
     public bool ThemeDark { get; set; }
@@ -141,6 +143,8 @@ public class Settings
         StatusUnknown = true;
         StatusDisposed = true;
         CompactWidget = true;
+        WidgetScale = "medium";
+        WidgetTopMost = false;
         CompactWorkspaceList = false;
         InlineTaskTime = false;
         ThemeDark = true;
@@ -206,6 +210,7 @@ public sealed class SettingsForm : Form
     private readonly Dictionary<string, CheckBox> checks = new Dictionary<string, CheckBox>();
     private readonly Dictionary<Control, int> pages = new Dictionary<Control, int>();
     private readonly ComboBox soundPreset = new ComboBox();
+    private readonly ComboBox widgetScale = new ComboBox();
     private Panel contentPanel;
     private bool syncing;
     private int page;
@@ -274,8 +279,23 @@ public sealed class SettingsForm : Form
         Controls.Add(preview);
         pages.Add(preview, page);
         top += 26;
+        widgetScale.Name = "widget-scale";
+        widgetScale.AccessibleName = "Масштаб виджета";
+        widgetScale.DropDownStyle = ComboBoxStyle.DropDownList;
+        widgetScale.FlatStyle = FlatStyle.Flat;
+        widgetScale.BackColor = Graphite.Card;
+        widgetScale.ForeColor = Graphite.Primary;
+        widgetScale.Items.AddRange(new object[] { "Маленький (85%)", "Средний (100%)", "Большой (125%)" });
+        widgetScale.SelectedIndex = value.WidgetScale == "small" ? 0 : (value.WidgetScale == "large" ? 2 : 1);
+        widgetScale.SetBounds(RowInset, top, 199, 23);
+        widgetScale.SelectedIndexChanged += delegate { Save(); };
+        Label scaleLabel = new Label { Text = "Масштаб виджета", ForeColor = Graphite.Secondary, BackColor = Graphite.Base };
+        scaleLabel.SetBounds(218, top + 3, 130, 18);
+        Controls.Add(scaleLabel); pages.Add(scaleLabel, page);
+        Controls.Add(widgetScale); pages.Add(widgetScale, page); top += 26;
         Add("subagent-notices", "Уведомления субагентов", value.SubagentNotices, ref top);
         Add("compact-widget", "Компактный вид", value.CompactWidget, ref top);
+        Add("widget-topmost", "Поверх остальных окон", value.WidgetTopMost, ref top);
         Add("compact-workspace-list", "Короткий список областей: имя и состояние", value.CompactWorkspaceList, ref top);
         Add("theme-dark", "Тёмная тема", value.ThemeDark, ref top);
         Add("show-limits", "Лимиты ИИ в окне „Задачи“", value.ShowLimits, ref top);
@@ -472,6 +492,7 @@ public sealed class SettingsForm : Form
         value.ShowNotifications = checks["show-notices"].Checked;
         value.NotificationSound = checks["notice-sound"].Checked;
         value.NotificationSoundPreset = SelectedSound();
+        value.WidgetScale = widgetScale.SelectedIndex == 0 ? "small" : (widgetScale.SelectedIndex == 2 ? "large" : "medium");
         value.SubagentNotices = checks["subagent-notices"].Checked;
         value.FieldWorkspace = checks["field-workspace"].Checked;
         value.FieldTask = checks["field-task"].Checked;
@@ -480,6 +501,7 @@ public sealed class SettingsForm : Form
         value.FieldPath = checks["field-path"].Checked;
         value.WidgetCounts = checks["widget-counts"].Checked;
         value.CompactWidget = checks["compact-widget"].Checked;
+        value.WidgetTopMost = checks["widget-topmost"].Checked;
         value.CompactWorkspaceList = checks["compact-workspace-list"].Checked;
         if (!wasCompactWorkspaceList && value.CompactWorkspaceList)
         {
@@ -578,7 +600,7 @@ public sealed class TaskGlyph : Control
 
 public sealed class LimitsPanel : Control
 {
-    private const int FirstRowTop = 4;
+    private const int FirstRowTop = 1;
     private const int RowHeight = 18;
     private const int ProviderTextLeft = 27;
     private static readonly CultureInfo AmountCulture = CultureInfo.GetCultureInfo("ru-RU");
@@ -590,6 +612,9 @@ public sealed class LimitsPanel : Control
         | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
     private List<Dictionary<string, object>> providers = new List<Dictionary<string, object>>();
     private DateTime receivedAt = DateTime.MinValue;
+    private float zoom = 1F;
+    private int Px(int value) { return (int)Math.Round(value * zoom); }
+    public float WidgetZoom { get { return zoom; } set { zoom = value < .9F ? .85F : (value > 1.1F ? 1.25F : 1F); Invalidate(); } }
     private readonly ToolTip hints = new ToolTip();
 
     public LimitsPanel()
@@ -607,7 +632,7 @@ public sealed class LimitsPanel : Control
         int lines = 0;
         foreach (Dictionary<string, object> provider in providers)
             lines += HasCurrentData(provider) ? ValueList(provider, "windows").Count + MetricText(provider).Count : 1;
-        Height = Math.Max(22, FirstRowTop + lines * RowHeight);
+        Height = (int)Math.Round(Math.Max(22, FirstRowTop + lines * RowHeight + Math.Max(0, providers.Count - 1) * 3) * zoom);
         AccessibleDescription = String.Join(", ", providers.Select(ProviderName).ToArray());
         Invalidate();
     }
@@ -618,27 +643,34 @@ public sealed class LimitsPanel : Control
     {
         Graphics graphics = eventArgs.Graphics;
         graphics.Clear(Graphite.Base);
-        using (Font detail = new Font("Segoe UI", 7.5F, FontStyle.Regular))
+        using (Font detail = new Font("Segoe UI", 7.5F * zoom, FontStyle.Regular))
         {
             if (providers.Count == 0)
             {
-                TextRenderer.DrawText(graphics, "Нет выбранных служб", detail, new Point(8, 6), Graphite.Secondary);
+                TextRenderer.DrawText(graphics, "Нет выбранных служб", detail, new Point(Px(8), Px(6)), Graphite.Secondary);
                 return;
             }
-            int width = Parent == null ? ClientSize.Width : Math.Min(ClientSize.Width, Parent.ClientSize.Width);
+            int width = (int)Math.Round((Parent == null ? ClientSize.Width : Math.Min(ClientSize.Width, Parent.ClientSize.Width)) / zoom);
             int dataLeft = Math.Min(117, Math.Max(ProviderTextLeft + 21, width / 2));
             int dataWidth = Math.Max(1, width - dataLeft - 6);
             int top = FirstRowTop;
+            bool firstProvider = true;
             foreach (Dictionary<string, object> provider in providers)
             {
+                if (!firstProvider)
+                {
+                    using (Pen divider = new Pen(Graphite.Border)) graphics.DrawLine(divider, Px(6), Px(top + 1), Px(Math.Max(6, width - 6)), Px(top + 1));
+                    top += 3;
+                }
+                firstProvider = false;
                 Image badge = ProviderBadge(Field(provider, "id"), ProviderName(provider));
-                if (badge != null) graphics.DrawImage(badge, new Rectangle(6, top, 18, 18));
+                if (badge != null) graphics.DrawImage(badge, new Rectangle(Px(6), Px(top), Px(18), Px(18)));
                 TextRenderer.DrawText(graphics, ProviderName(provider), detail,
-                    new Rectangle(ProviderTextLeft, top, dataLeft - ProviderTextLeft - 5, RowHeight),
+                    new Rectangle(Px(ProviderTextLeft), Px(top), Px(dataLeft - ProviderTextLeft - 5), Px(RowHeight)),
                     Graphite.Primary, CompactText | TextFormatFlags.VerticalCenter);
                 if (!HasCurrentData(provider))
                 {
-                    TextRenderer.DrawText(graphics, "Нет данных", detail, new Rectangle(dataLeft, top, dataWidth, RowHeight),
+                    TextRenderer.DrawText(graphics, DeepSeekReason(provider), detail, new Rectangle(Px(dataLeft), Px(top), Px(dataWidth), Px(RowHeight)),
                         Graphite.Secondary, CompactText | TextFormatFlags.VerticalCenter);
                     top += RowHeight;
                     continue;
@@ -651,8 +683,8 @@ public sealed class LimitsPanel : Control
                     string reset = HasNumber(window, "resetAt") ? Countdown(ToLong(window, "resetAt"), true) : "";
                     string caption = period + " · " + Math.Round(percent) + "%" + (reset.Length == 0 ? "" : " · " + reset);
                     TextRenderer.DrawText(graphics, caption, detail,
-                        new Rectangle(dataLeft, top, dataWidth, RowHeight - 4), Graphite.Primary, CompactText);
-                    Rectangle track = new Rectangle(dataLeft, top + RowHeight - 4, Math.Min(70, dataWidth), 3);
+                        new Rectangle(Px(dataLeft), Px(top), Px(dataWidth), Px(RowHeight - 4)), Graphite.Primary, CompactText);
+                    Rectangle track = new Rectangle(Px(dataLeft), Px(top + RowHeight - 4), Px(Math.Min(70, dataWidth)), Px(3));
                     using (Brush trackBrush = new SolidBrush(Graphite.Border)) graphics.FillRectangle(trackBrush, track);
                     Color tier = percent < 25 ? Graphite.QuotaLow : (percent < 60 ? Graphite.QuotaMedium : Graphite.QuotaHigh);
                     using (Brush fill = new SolidBrush(tier)) graphics.FillRectangle(fill, track.X, track.Y, (int)(track.Width * percent / 100.0), track.Height);
@@ -660,7 +692,7 @@ public sealed class LimitsPanel : Control
                 }
                 foreach (string metric in MetricText(provider, true))
                 {
-                    TextRenderer.DrawText(graphics, metric, detail, new Rectangle(dataLeft, top, dataWidth, RowHeight),
+                    TextRenderer.DrawText(graphics, metric, detail, new Rectangle(Px(dataLeft), Px(top), Px(dataWidth), Px(RowHeight)),
                         Graphite.Primary, CompactText | TextFormatFlags.VerticalCenter);
                     top += RowHeight;
                 }
@@ -692,6 +724,16 @@ public sealed class LimitsPanel : Control
         string label = Field(provider, "label");
         if (label == "OpenAI Codex") return "Codex";
         return label.Length == 0 ? Field(provider, "id") : label;
+    }
+    private static string DeepSeekReason(Dictionary<string, object> provider)
+    {
+        string reason = Field(provider, "unavailableReason");
+        if (reason == "MISSING_CONFIG") return "Не настроено";
+        if (reason == "MISSING_KEY") return "Нет ключа";
+        if (reason == "UNRECOGNIZED_ORIGIN") return "Неверный адрес";
+        if (reason == "CREDENTIALS_REJECTED") return "Ключ отклонён";
+        if (reason == "NO_RESPONSE") return "Нет ответа";
+        return "Нет данных";
     }
     private static Image[] LoadProviderBadges(string brand)
     {
@@ -753,25 +795,29 @@ public sealed class LimitsPanel : Control
     }
     protected override void OnMouseMove(MouseEventArgs eventArgs)
     {
-        int line = Math.Max(0, (eventArgs.Y - FirstRowTop) / RowHeight); int offset = 0;
+        int y = (int)Math.Floor(eventArgs.Y / zoom);
+        int visualTop = FirstRowTop; bool firstProvider = true;
         foreach (Dictionary<string, object> provider in providers)
         {
+            if (!firstProvider && y >= visualTop && y < visualTop + 3) { hints.SetToolTip(this, String.Empty); return; }
+            if (!firstProvider) visualTop += 3;
+            firstProvider = false;
             if (!HasCurrentData(provider))
             {
-                if (line == offset)
+                if (y >= visualTop && y < visualTop + RowHeight)
                 {
-                    hints.SetToolTip(this, ProviderName(provider) + " · Нет данных");
+                    hints.SetToolTip(this, ProviderName(provider) + " · " + DeepSeekReason(provider));
                     return;
                 }
-                offset++;
+                visualTop += RowHeight;
                 continue;
             }
             List<Dictionary<string, object>> windows = ValueList(provider, "windows");
             List<string> metrics = MetricText(provider);
             int count = Math.Max(1, windows.Count + metrics.Count);
-            if (line < offset + count)
+            if (y >= visualTop && y < visualTop + count * RowHeight)
             {
-                int local = line - offset;
+                int local = (y - visualTop) / RowHeight;
                 string detail;
                 if (local < windows.Count)
                 {
@@ -784,7 +830,7 @@ public sealed class LimitsPanel : Control
                 hints.SetToolTip(this, ProviderName(provider) + " · " + detail);
                 return;
             }
-            offset += count;
+            visualTop += count * RowHeight;
         }
         hints.SetToolTip(this, String.Empty);
     }
@@ -840,7 +886,6 @@ public sealed class DshNotifyGui : Form
     private readonly LimitsPanel limits = new LimitsPanel();
     private readonly Panel limitsHost = new Panel();
     private readonly Panel resizeGrip = new Panel();
-    private int compactUserHeight;
     private int expandedUserHeight;
     private int resizeStartHeight;
     private int resizeStartY;
@@ -852,6 +897,8 @@ public sealed class DshNotifyGui : Form
     private readonly List<string> noticeOrder = new List<string>();
     private readonly List<SettingsForm> settingsForms = new List<SettingsForm>();
     private readonly List<Button> headerButtons = new List<Button>();
+    private FlowLayoutPanel headerActions;
+    private float appliedWidgetScale = 1F;
     private Panel headerPanel;
     private Label headerTitle;
     private TaskGlyph taskGlyph;
@@ -861,6 +908,7 @@ public sealed class DshNotifyGui : Form
     private string lastWidgetSnapshot;
     private static readonly Font CardTitleFont = new Font("Segoe UI", 9F, FontStyle.Bold);
     private static readonly Font CardDetailFont = new Font("Segoe UI", 8.25F, FontStyle.Regular);
+    private static readonly Font NoticeTaskFont = new Font("Segoe UI", 9F, FontStyle.Regular);
     private bool widgetUserMoving;
     private bool noticesManuallyHidden;
     private bool isShuttingDown;
@@ -870,6 +918,33 @@ public sealed class DshNotifyGui : Form
     private List<Dictionary<string, object>> limitProviders = new List<Dictionary<string, object>>();
     private List<Dictionary<string, object>> availableLimitProviders = new List<Dictionary<string, object>>();
     private DateTime limitsReceivedAt = DateTime.MinValue;
+
+    private float WidgetScaleFactor { get { return Settings != null && Settings.WidgetScale == "small" ? .85F : (Settings != null && Settings.WidgetScale == "large" ? 1.25F : 1F); } }
+    private int Px(int value) { return (int)Math.Round(value * WidgetScaleFactor); }
+    private Font WidgetFont(float size, FontStyle style = FontStyle.Regular) { return new Font("Segoe UI", size * WidgetScaleFactor, style); }
+    private void ScaleWidgetFonts(Control control)
+    {
+        float baseSize;
+        if (control.Tag is float) baseSize = (float)control.Tag;
+        else
+        {
+            baseSize = Math.Abs(control.Font.SizeInPoints - Font.SizeInPoints) < .01F ? control.Font.SizeInPoints / appliedWidgetScale : control.Font.SizeInPoints;
+            control.Tag = baseSize;
+        }
+        control.Font = new Font(control.Font.FontFamily, baseSize * WidgetScaleFactor, control.Font.Style);
+        foreach (Control child in control.Controls) ScaleWidgetFonts(child);
+    }
+    private void ApplyWidgetChrome()
+    {
+        headerPanel.Height = Px(30);
+        taskGlyph.Location = new Point(Px(8), Px(6)); taskGlyph.Size = new Size(Px(18), Px(18));
+        headerTitle.Location = new Point(Px(30), Px(7));
+        headerActions.Padding = new Padding(Px(5), Px(3), Px(5), Px(3));
+        foreach (Control child in headerActions.Controls) { Button button = child as Button; if (button != null) button.Size = new Size(Px(26), Px(24)); }
+        headerActions.Width = headerActions.Padding.Horizontal + headerActions.Controls.Cast<Control>().Sum(button => button.Width + button.Margin.Horizontal);
+        resizeGrip.Height = Px(ResizeGripHeight);
+        ScaleWidgetFonts(this); appliedWidgetScale = WidgetScaleFactor;
+    }
 
     public Settings Settings { get; private set; }
     internal bool DemoSettingsAfterApply { get; set; }
@@ -898,6 +973,7 @@ public sealed class DshNotifyGui : Form
         Text = (demo ? "[ДЕМО] " : "") + "Задачи";
         Icon = TaskIcon.Window;
         FormBorderStyle = FormBorderStyle.None;
+        ResizeRedraw = true;
         BackColor = Graphite.Base;
         ClientSize = new Size(WidgetWidth, CompactHeight);
         Font = new Font("Segoe UI", 9F);
@@ -907,7 +983,7 @@ public sealed class DshNotifyGui : Form
         header.Dock = DockStyle.Top;
         header.BackColor = Graphite.Card;
         header.MouseDown += DragWidget;
-        FlowLayoutPanel headerActions = new FlowLayoutPanel();
+        headerActions = new FlowLayoutPanel();
         headerActions.Dock = DockStyle.Right;
         headerActions.Padding = new Padding(5, 3, 5, 3);
         headerActions.WrapContents = false;
@@ -1126,6 +1202,11 @@ public sealed class DshNotifyGui : Form
     public void ApplyRemote(Settings settings)
     {
         Settings = settings ?? new Settings();
+        if (Settings.WidgetScale != "small" && Settings.WidgetScale != "large") Settings.WidgetScale = "medium";
+        TopMost = Settings.WidgetTopMost;
+        compact.WidgetZoom = WidgetScaleFactor;
+        limits.WidgetZoom = WidgetScaleFactor;
+        ApplyWidgetChrome();
         Graphite.ApplyTheme(Settings.ThemeDark);
         ApplyTheme();
         lastShowWidget = Settings.ShowWidget;
@@ -1159,6 +1240,11 @@ public sealed class DshNotifyGui : Form
         bool widgetWasShown = lastShowWidget;
         bool noticesWereShown = lastShowNotifications;
         Settings = settings ?? new Settings();
+        if (Settings.WidgetScale != "small" && Settings.WidgetScale != "large") Settings.WidgetScale = "medium";
+        TopMost = Settings.WidgetTopMost;
+        compact.WidgetZoom = WidgetScaleFactor;
+        limits.WidgetZoom = WidgetScaleFactor;
+        ApplyWidgetChrome();
         Graphite.ApplyTheme(Settings.ThemeDark);
         ApplyTheme();
         lastShowWidget = Settings.ShowWidget;
@@ -1512,7 +1598,7 @@ public sealed class DshNotifyGui : Form
             string caption = TextOf(notice, "statusText");
             if (String.IsNullOrEmpty(caption)) caption = StatusLabel(status);
             int width = Math.Min(161, TextRenderer.MeasureText(caption, CardDetailFont).Width + 28);
-            Panel chip = MakeStatusIndicator(status, caption, new Rectangle(titleRight - width, 8, width, 20), true);
+            Panel chip = MakeStatusIndicator(status, caption, new Rectangle(titleRight - width, 8, width, 20), true, 16, CardDetailFont);
             chip.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             card.Controls.Add(chip);
             titleRight = chip.Left - 8;
@@ -1527,7 +1613,7 @@ public sealed class DshNotifyGui : Form
         string normalizedDuration = FormatNoticeDuration(TextOf(notice, "duration"));
         bool validDuration = normalizedDuration != "Время неизвестно" && !String.IsNullOrEmpty(normalizedDuration);
         string inlineDuration = Settings.InlineTaskTime && validDuration ? normalizedDuration : String.Empty;
-        if (Settings.FieldTask) top = AddTaskText(card, task, top, card.Width - 24, inlineDuration);
+        if (Settings.FieldTask) top = AddTaskText(card, task, top, card.Width - 24, inlineDuration, NoticeTaskFont, CardDetailFont);
 
         List<string> metadata = new List<string>();
         bool inlineRendered = Settings.FieldTask && !String.IsNullOrWhiteSpace(task) && task != "Задача не указана" && !String.IsNullOrEmpty(inlineDuration);
@@ -1548,18 +1634,18 @@ public sealed class DshNotifyGui : Form
         return card;
     }
 
-    private static Panel MakeStatusIndicator(string status, string text, Rectangle bounds, bool badge)
+    private static Panel MakeStatusIndicator(string status, string text, Rectangle bounds, bool badge, int glyphSize, Font captionFont)
     {
         Panel indicator = new Panel
         {
             Bounds = bounds,
             BackColor = badge ? Graphite.ChipFill(status) : Graphite.Card
         };
-        var icon = new StatusGlyph(status) { Bounds = new Rectangle(2, (bounds.Height - 16) / 2, 16, 16), BackColor = indicator.BackColor };
+        var icon = new StatusGlyph(status) { Bounds = new Rectangle(2, (bounds.Height - glyphSize) / 2, glyphSize, glyphSize), BackColor = indicator.BackColor };
         var caption = new Label
         {
             Text = text, UseMnemonic = false, AutoEllipsis = true,
-            TextAlign = ContentAlignment.MiddleLeft, Font = CardDetailFont,
+            TextAlign = ContentAlignment.MiddleLeft, Font = captionFont,
             ForeColor = Graphite.Accent(status), BackColor = indicator.BackColor,
             Bounds = new Rectangle(21, 0, Math.Max(1, bounds.Width - 23), bounds.Height),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
@@ -1569,19 +1655,19 @@ public sealed class DshNotifyGui : Form
         return indicator;
     }
 
-    private int AddTaskText(Panel card, string task, int top, int width, string duration = "")
+    private int AddTaskText(Panel card, string task, int top, int width, string duration, Font taskFont, Font detailFont, int timeGap = 12)
     {
         if (String.IsNullOrWhiteSpace(task) || task == "Задача не указана") return top;
-        int timeWidth = String.IsNullOrEmpty(duration) ? 0 : TextRenderer.MeasureText(duration, CardDetailFont).Width + 8;
+        int timeWidth = String.IsNullOrEmpty(duration) ? 0 : TextRenderer.MeasureText(duration, detailFont).Width + 8;
         int taskWidth = Math.Max(1, width - timeWidth);
-        Size measured = TextRenderer.MeasureText(task, Font, new Size(taskWidth, Int32.MaxValue),
+        Size measured = TextRenderer.MeasureText(task, taskFont, new Size(taskWidth, Int32.MaxValue),
             TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
-        int height = Math.Min(Font.Height * 2 + 3, Math.Max(Font.Height + 1, measured.Height));
-        AddNoticeLabel(card, task, Font, Graphite.Primary, top, taskWidth, height);
+        int height = Math.Min(taskFont.Height * 2 + 3, Math.Max(taskFont.Height + 1, measured.Height));
+        AddNoticeLabel(card, task, taskFont, Graphite.Primary, top, taskWidth, height);
         if (!String.IsNullOrEmpty(duration))
         {
-            Label time = new Label { Text = duration, Font = CardDetailFont, ForeColor = Graphite.Secondary,
-                TextAlign = ContentAlignment.TopRight, Bounds = new Rectangle(taskWidth + 12, top, timeWidth, Font.Height + 2),
+            Label time = new Label { Text = duration, Font = detailFont, ForeColor = Graphite.Secondary,
+                TextAlign = ContentAlignment.TopRight, Bounds = new Rectangle(taskWidth + timeGap, top, timeWidth, detailFont.Height + 2),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right };
             card.Controls.Add(time);
         }
@@ -1646,45 +1732,45 @@ public sealed class DshNotifyGui : Form
             AccessibleName = "Карточка рабочей области",
             Margin = new Padding(0, 0, 0, 6)
         };
-        int contentWidth = Math.Max(1, width - 24);
+        int contentWidth = Math.Max(1, width - Px(24));
         string title = String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace;
-        int top = 8;
+        int top = Px(8);
         if (Settings.FieldWorkspace && !String.IsNullOrWhiteSpace(title))
         {
-            AddNoticeLabel(card, title, CardTitleFont, Graphite.Primary, top, contentWidth, 19);
-            top += 21;
+            AddNoticeLabel(card, title, WidgetFont(9F, FontStyle.Bold), Graphite.Primary, top, contentWidth, Px(19));
+            top += Px(21);
         }
         if (Settings.FieldStatus)
         {
             string status = String.IsNullOrEmpty(row.StatusText) ? StatusLabel(row.Status) : row.StatusText;
-            Panel indicator = MakeStatusIndicator(row.Status, status, new Rectangle(10, top, contentWidth + 2, 18), false);
+            Panel indicator = MakeStatusIndicator(row.Status, status, new Rectangle(Px(10), top, contentWidth + Px(2), Px(18)), false, Px(16), WidgetFont(8.25F));
             indicator.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             card.Controls.Add(indicator);
-            top += 21;
+            top += Px(21);
         }
         if (Settings.FieldTask) top = AddTaskText(card, row.TaskSummary, top, contentWidth,
-            Settings.InlineTaskTime ? row.TimeText : String.Empty);
+            Settings.InlineTaskTime ? row.TimeText : String.Empty, WidgetFont(9F, FontStyle.Regular), WidgetFont(8.25F), Px(12));
         List<string> metadata = WidgetMetadata(row);
         if (metadata.Count > 0 && top > 8) top = AddMetadataRule(card, top, contentWidth);
         foreach (string detail in metadata)
         {
-            AddNoticeLabel(card, detail, CardDetailFont, Graphite.Secondary, top, contentWidth, 17);
-            top += 18;
+            AddNoticeLabel(card, detail, WidgetFont(8.25F), Graphite.Secondary, top, contentWidth, Px(17));
+            top += Px(18);
         }
-        card.Height = top + 6;
+        card.Height = top + Px(6);
         if (!String.Equals(row.Status, "idle", StringComparison.OrdinalIgnoreCase)) BindSessionOpen(card, row.SessionId, null);
         return card;
     }
 
     private Panel MakeCompactWorkspaceRow(WidgetRow row, int width)
     {
-        Panel item = new Panel { Width = width, Height = 26, BackColor = Graphite.Card,
-            AccessibleName = "Рабочая область: " + (String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace), Margin = new Padding(0, 0, 0, 2) };
+        Panel item = new Panel { Width = width, Height = Px(26), BackColor = Graphite.Card,
+            AccessibleName = "Рабочая область: " + (String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace), Margin = new Padding(0, 0, 0, Px(2)) };
         string title = String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace;
-        Label name = new Label { Text = title, AutoEllipsis = true, Font = CardDetailFont, ForeColor = Graphite.Primary,
-            Bounds = new Rectangle(8, 4, Math.Max(1, width - 126), 18), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        Label name = new Label { Text = title, AutoEllipsis = true, Font = WidgetFont(8.25F), ForeColor = Graphite.Primary,
+            Bounds = new Rectangle(Px(8), Px(4), Math.Max(1, width - Px(126)), Px(18)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         string state = String.IsNullOrEmpty(row.StatusText) ? StatusLabel(row.Status) : row.StatusText;
-        Panel indicator = MakeStatusIndicator(row.Status, state, new Rectangle(Math.Max(8, width - 118), 4, 112, 18), false);
+        Panel indicator = MakeStatusIndicator(row.Status, state, new Rectangle(Math.Max(Px(8), width - Px(118)), Px(4), Px(112), Px(18)), false, Px(16), WidgetFont(8.25F));
         indicator.AccessibleDescription = state;
         indicator.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         item.Controls.Add(name); item.Controls.Add(indicator);
@@ -1818,15 +1904,15 @@ public sealed class DshNotifyGui : Form
 
     private int UserWidgetHeight
     {
-        get { return Settings.CompactWidget ? compactUserHeight : expandedUserHeight; }
+        get { return expandedUserHeight; }
     }
 
     internal void SetUserWidgetHeight(int height)
     {
+        if (Settings.CompactWidget) return;
         Rectangle area = Screen.FromPoint(Location).WorkingArea;
         int requested = Math.Max(1, Math.Min(height, area.Bottom - Math.Max(Top, area.Top)));
-        if (Settings.CompactWidget) compactUserHeight = requested;
-        else expandedUserHeight = requested;
+        expandedUserHeight = (int)Math.Round(requested / WidgetScaleFactor);
         UpdateLimitsHost();
         ResizeWidget();
     }
@@ -1835,10 +1921,13 @@ public sealed class DshNotifyGui : Form
     {
         Point previous = Location;
         Rectangle area = Screen.FromPoint(previous).WorkingArea;
-        int automatic = ResizeGripHeight + (Settings.CompactWidget ? CompactHeight + limitsHost.Height : ExpandedHeight);
-        int preferred = UserWidgetHeight;
-        int height = preferred > 0 ? Math.Max(automatic, preferred) : Math.Min(automatic, HeightLimit(area, ExpandedHeight + ResizeGripHeight));
-        Rectangle next = Geometry.ClampToVisible(new Rectangle(previous, new Size(WidgetWidth, height)), area);
+        int automatic = Settings.CompactWidget
+            ? Px(CompactHeight) + limitsHost.Height
+            : Px(ResizeGripHeight + ExpandedHeight);
+        int preferred = Settings.CompactWidget ? 0 : Px(expandedUserHeight);
+        int height = preferred > 0 ? Math.Max(automatic, preferred) : Math.Min(automatic, HeightLimit(area, Px(ExpandedHeight + ResizeGripHeight)));
+        resizeGrip.Visible = !Settings.CompactWidget;
+        Rectangle next = Geometry.ClampToVisible(new Rectangle(previous, new Size(Px(WidgetWidth), height)), area);
         if (Bounds == next)
         {
             return;
@@ -1898,9 +1987,9 @@ public sealed class DshNotifyGui : Form
     private void UpdateLimitsHost()
     {
         limitsHost.Visible = Settings.ShowLimits;
-        int preferred = Math.Min(UserWidgetHeight, Screen.FromPoint(Location).WorkingArea.Height);
-        int minimumTaskArea = Settings.CompactWidget ? CompactHeight - headerPanel.Height : 160;
-        int available = Math.Max(DefaultQuotaHeight, preferred - headerPanel.Height - ResizeGripHeight - minimumTaskArea);
+        int preferred = Math.Min(Px(UserWidgetHeight), Screen.FromPoint(Location).WorkingArea.Height);
+        int minimumTaskArea = Settings.CompactWidget ? Px(CompactHeight) - headerPanel.Height : Px(160);
+        int available = Math.Max(Px(DefaultQuotaHeight), preferred - headerPanel.Height - resizeGrip.Height - minimumTaskArea);
         limitsHost.Height = Settings.ShowLimits ? Math.Min(available, limits.DesiredHeight) : 0;
         limits.Width = Math.Max(1, ClientSize.Width - limitsHost.Padding.Horizontal);
     }

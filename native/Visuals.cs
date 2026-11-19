@@ -269,6 +269,8 @@ internal sealed class StatusGlyph : Control
     protected override void OnPaint(PaintEventArgs args)
     {
         var graphics = args.Graphics;
+        float sx = Width / 16F, sy = Height / 16F;
+        graphics.ScaleTransform(sx, sy);
         graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         Color color = Graphite.Accent(status);
         using (Pen pen = new Pen(color, 1.6F))
@@ -300,11 +302,13 @@ internal sealed class StatusGlyph : Control
 
 public sealed class CompactWidgetControl : Control
 {
-    private const int DistributionHeight = 5;
-    private const int DistributionBottomInset = 4;
     private const int NamesHeight = 16;
     private IList<WidgetRow> rows = new List<WidgetRow>();
     private Settings settings;
+    private float scale = 1F;
+    private int logicalWidth;
+    private int logicalHeight;
+    public float WidgetZoom { get { return scale; } set { scale = value < .9F ? .85F : (value > 1.1F ? 1.25F : 1F); MinimumSize = new Size((int)Math.Round(230 * scale), (int)Math.Round(85 * scale)); Invalidate(); } }
     public CompactWidgetControl()
     {
         DoubleBuffered = true;
@@ -324,8 +328,11 @@ public sealed class CompactWidgetControl : Control
     protected override void OnPaint(PaintEventArgs eventArgs)
     {
         Graphics graphics = eventArgs.Graphics;
+        graphics.ScaleTransform(scale, scale);
         graphics.Clear(BackColor);
-        Rectangle bounds = ClientRectangle;
+        logicalWidth = Math.Max(1, (int)Math.Round(ClientSize.Width / scale));
+        logicalHeight = Math.Max(1, (int)Math.Round(ClientSize.Height / scale));
+        Rectangle bounds = new Rectangle(0, 0, logicalWidth, logicalHeight);
         using (Brush surface = new SolidBrush(Graphite.Card))
         using (Pen border = new Pen(Graphite.Border))
         {
@@ -340,15 +347,14 @@ public sealed class CompactWidgetControl : Control
         if (settings != null && settings.WidgetCounts)
         {
             DrawMetrics(graphics);
-            DrawDistribution(graphics);
         }
         DrawRegisteredNames(graphics);
     }
 
     private void DrawEmpty(Graphics graphics)
     {
-        DrawText(graphics, "Нет активности", new Rectangle(12, 28, Width - 24, 24), 10F, Graphite.Primary);
-        DrawText(graphics, "Новые задачи появятся здесь", new Rectangle(12, 56, Width - 24, 20), 8F, Graphite.Secondary);
+        DrawText(graphics, "Нет активности", new Rectangle(12, 28, logicalWidth - 24, 24), 10F, Graphite.Primary);
+        DrawText(graphics, "Новые задачи появятся здесь", new Rectangle(12, 56, logicalWidth - 24, 20), 8F, Graphite.Secondary);
     }
 
     private void DrawRegisteredNames(Graphics graphics)
@@ -358,8 +364,8 @@ public sealed class CompactWidgetControl : Control
         if (names.Count == 0) return;
         int extra = rows.Count(row => row.Registered) - names.Count;
         string text = String.Join(" · ", names.ToArray()) + (extra > 0 ? " +" + extra : "");
-        int namesTop = settings.WidgetCounts ? DistributionTop - NamesHeight - 2 : Height - 22;
-        DrawText(graphics, text, new Rectangle(12, namesTop, Width - 24, NamesHeight), 8F, Graphite.Secondary);
+        int namesTop = settings.WidgetCounts ? 62 : logicalHeight - 22;
+        DrawText(graphics, text, new Rectangle(12, namesTop, logicalWidth - 24, NamesHeight), 8F, Graphite.Secondary);
     }
 
     private void DrawMetrics(Graphics graphics)
@@ -367,7 +373,7 @@ public sealed class CompactWidgetControl : Control
         int running = Count("running");
         int completed = Count("completed");
         int issues = rows.Count - running - completed;
-        int width = Math.Max(58, (Width - 40) / 3);
+        int width = Math.Max(58, (logicalWidth - 40) / 3);
         DrawMetric(graphics, new Rectangle(12, 14, width, 42), 0, running, "активных", Color.FromArgb(127, 179, 224));
         DrawMetric(graphics, new Rectangle(20 + width, 14, width, 42), 1, completed, "готово", Color.FromArgb(127, 194, 154));
         DrawMetric(graphics, new Rectangle(28 + width * 2, 14, width, 42), 2, issues, "прочее", Graphite.Secondary);
@@ -408,34 +414,6 @@ public sealed class CompactWidgetControl : Control
         }
     }
 
-    private int DistributionTop
-    {
-        get { return Height - DistributionBottomInset - DistributionHeight; }
-    }
-
-    private void DrawDistribution(Graphics graphics)
-    {
-        int total = rows.Count;
-        if (total == 0)
-        {
-            return;
-        }
-        int running = Count("running");
-        int completed = Count("completed");
-        int top = DistributionTop;
-        int width = Width - 24;
-        int runningWidth = width * running / total;
-        int completedWidth = width * completed / total;
-        using (Brush runningBrush = new SolidBrush(Color.FromArgb(127, 179, 224)))
-        using (Brush completedBrush = new SolidBrush(Color.FromArgb(127, 194, 154)))
-        using (Brush neutralBrush = new SolidBrush(Graphite.Secondary))
-        {
-            graphics.FillRectangle(runningBrush, 12, top, runningWidth, DistributionHeight);
-            graphics.FillRectangle(completedBrush, 12 + runningWidth, top, completedWidth, DistributionHeight);
-            graphics.FillRectangle(neutralBrush, 12 + runningWidth + completedWidth, top, width - runningWidth - completedWidth, DistributionHeight);
-        }
-    }
-
     private int Count(string status)
     {
         int count = 0;
@@ -452,8 +430,10 @@ public sealed class CompactWidgetControl : Control
     private static void DrawText(Graphics graphics, string text, Rectangle rectangle, float size, Color color)
     {
         using (Font font = new Font("Segoe UI", size, FontStyle.Regular))
+        using (Brush brush = new SolidBrush(color))
+        using (StringFormat format = new StringFormat { LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap })
         {
-            TextRenderer.DrawText(graphics, text, font, rectangle, color, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
+            graphics.DrawString(text, font, brush, rectangle, format);
         }
     }
 }

@@ -18,6 +18,14 @@ test('uses honest Russian labels and short summaries', () => {
   assert.equal(summary('x'.repeat(250)).length, 200)
 })
 
+test('widget scale and topmost settings have safe defaults and persist valid values', () => {
+  assert.equal(DEFAULT_SETTINGS.WidgetScale, 'medium')
+  assert.equal(DEFAULT_SETTINGS.WidgetTopMost, false)
+  assert.deepEqual(normalizeSettings({ WidgetScale: 'large', WidgetTopMost: true }).WidgetScale, 'large')
+  assert.equal(normalizeSettings({ WidgetScale: 'large', WidgetTopMost: true }).WidgetTopMost, true)
+  assert.equal(normalizeSettings({ WidgetScale: 'invalid' }).WidgetScale, 'medium')
+})
+
 test('notifies exactly once for an active baseline and ignores closed history', () => {
   const active = new Tracker({ turnBoundaryOf: () => ({ lastTurn: 7, openTurnStartSeq: 4 }) })
   active.observe({ id: 'active', header: {} })

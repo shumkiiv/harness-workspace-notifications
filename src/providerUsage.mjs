@@ -31,8 +31,9 @@ function canonicalBase(value, expected) {
   try {
     const url = new URL(value)
     const canonical = new URL(expected)
-    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
-      && url.origin === canonical.origin && url.pathname.replace(/\/$/, '') === canonical.pathname.replace(/\/$/, '')
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.origin !== canonical.origin) return false
+    if (canonical.origin === 'https://api.deepseek.com') return ['', '/', '/v1', '/anthropic'].includes(url.pathname.replace(/\/$/, ''))
+    return url.pathname.replace(/\/$/, '') === canonical.pathname.replace(/\/$/, '')
   } catch { return false }
 }
 
@@ -77,7 +78,7 @@ function usageResponse(body) {
   return windows.length ? { windows } : null
 }
 
-async function request({ cache, key, eligible, resolve, fetchImpl, url, authorization, parse }) {
+async function request({ cache, key, eligible, resolve, fetchImpl, url, authorization, parse, unavailableReason }) {
   if (!eligible()) return null
   const clock = Date.now()
   const cached = cache.get(key)
@@ -86,15 +87,17 @@ async function request({ cache, key, eligible, resolve, fetchImpl, url, authoriz
   const pending = (async () => {
     try {
       const resolved = await resolve()
-      if (!eligible() || !resolved || typeof resolved.value !== 'string' || !resolved.value) return null
+      if (!eligible()) return null
+      if (!resolved || typeof resolved.value !== 'string' || !resolved.value) return unavailableReason ? { unavailableReason: 'MISSING_KEY' } : null
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 10_000)
       try {
         const response = await fetchImpl(url, { method: 'GET', headers: { Accept: 'application/json', Authorization: authorization(resolved.value) }, redirect: 'error', signal: controller.signal })
-        if (!response?.ok) return null
-        return parse(await response.json())
+        if (!response?.ok) return unavailableReason ? { unavailableReason: response?.status === 401 || response?.status === 403 ? 'CREDENTIALS_REJECTED' : 'NO_RESPONSE' } : null
+        const parsed = parse(await response.json())
+        return parsed || (unavailableReason ? { unavailableReason: 'NO_RESPONSE' } : null)
       } finally { clearTimeout(timeout) }
-    } catch { return null }
+    } catch { return unavailableReason ? { unavailableReason: 'NO_RESPONSE' } : null }
   })()
   cache.set(key, { at: clock, value: null, pending })
   const value = await pending
@@ -113,20 +116,22 @@ export async function createProviderUsageReaders({ ctx, configurableProviders, c
     const metadata = configurableProviders.filter((item) => item?.provider === id)
     if (metadata.length !== 1 || !Array.isArray(metadata[0].settingsPath)) return null
     const value = descriptor(descriptors, metadata[0], metadata[0].settingsPath)
-    if (!value || typeof value !== 'object') return null
-    if (own(value, 'apiKeyEnv') && (typeof value.apiKeyEnv !== 'string' || !value.apiKeyEnv)) return null
+    const unavailable = (reason) => async () => current() ? { unavailableReason: reason } : null
+    if (!value || typeof value !== 'object') return id === 'deepseek-official' ? unavailable('MISSING_CONFIG') : null
+    if (own(value, 'apiKeyEnv') && (typeof value.apiKeyEnv !== 'string' || !value.apiKeyEnv)) return id === 'deepseek-official' ? unavailable('MISSING_CONFIG') : null
     const reference = own(value, 'apiKeyEnv') ? value.apiKeyEnv : defaultRef
     const base = own(value, 'baseURL') ? value.baseURL : (overrideBase ?? metadata[0].defaultBaseURL ?? expectedBase)
-    if (!canonicalBase(base, expectedBase)) return null
+    if (!canonicalBase(base, expectedBase)) return id === 'deepseek-official' ? unavailable('UNRECOGNIZED_ORIGIN') : null
     const key = `${id}\u0000${reference}\u0000${expectedBase}`
     return async () => {
-      const result = await request({ cache, key, eligible: () => eligible(id), resolve: () => credentials.resolve(reference), fetchImpl, url, authorization, parse })
+      const result = await request({ cache, key, eligible: () => eligible(id), resolve: () => credentials.resolve(reference), fetchImpl, url, authorization, parse,
+        unavailableReason: id === 'deepseek-official' })
       return current() ? result : null
     }
   }
   let deepseekOverride
   try { deepseekOverride = ctx.get?.('launchEnvironment')?.get?.('DEEPSEEK_BASE_URL')?.value } catch { return {} }
-  const deepseek = reader('deepseek-official', 'https://api.deepseek.com/anthropic', 'DEEPSEEK_API_KEY', DEEPSEEK_BALANCE_URL, (key) => `Bearer ${key}`, amountResponse, deepseekOverride)
+  const deepseek = reader('deepseek-official', 'https://api.deepseek.com', 'DEEPSEEK_API_KEY', DEEPSEEK_BALANCE_URL, (key) => `Bearer ${key}`, amountResponse, deepseekOverride)
   const zai = reader('zai', 'https://api.z.ai/api/coding/paas/v4', 'ZAI_API_KEY', ZAI_USAGE_URL, (key) => key, usageResponse)
   return { ...(deepseek ? { 'deepseek-official': deepseek } : {}), ...(zai ? { zai } : {}) }
 }

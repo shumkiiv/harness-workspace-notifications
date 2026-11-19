@@ -10,8 +10,9 @@ export function quotaTier(percent) {
   return 'high'
 }
 
-function unavailable(provider) {
-  return { id: String(provider.id || ''), label: String(provider.name || provider.label || provider.id || ''), state: 'unavailable' }
+function unavailable(provider, reason) {
+  const bounded = new Set(['MISSING_CONFIG', 'MISSING_KEY', 'UNRECOGNIZED_ORIGIN', 'CREDENTIALS_REJECTED', 'NO_RESPONSE'])
+  return { id: String(provider.id || ''), label: String(provider.name || provider.label || provider.id || ''), state: 'unavailable', ...(bounded.has(reason) ? { unavailableReason: reason } : {}) }
 }
 
 export async function buildLimitsPayload({ listProviders, readers = {}, now = Date.now(), hiddenProviders = [] }) {
@@ -40,7 +41,7 @@ export async function buildLimitsPayload({ listProviders, readers = {}, now = Da
       ...(valid.length ? { windows: valid.map((item) => ({ label: item.label || humanizeWindow(item.windowSeconds), percent: item.percent,
         windowSeconds: item.windowSeconds, resetAt: Number.isFinite(item.resetAt) ? item.resetAt : null })),
       } : {}),
-    } : unavailable(provider)
+    } : unavailable(provider, raw?.unavailableReason)
   }))
   return { providers: result.filter(Boolean), receivedAt: now }
 }

@@ -70,9 +70,29 @@ test('unsafe metadata, custom base, malformed responses, and missing credentials
     credentials: { DEEP: undefined, ZAI: { value: 'never-used' } }, launch: { DEEPSEEK_BASE_URL: { value: 'https://api.deepseek.com/anthropic' } },
   })
   const readers = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers, fetchImpl: async () => { calls += 1; return Response.json({}) } })
-  assert.equal(readers['deepseek-official'], undefined)
+  assert.deepEqual(await readers['deepseek-official'](), { unavailableReason: 'UNRECOGNIZED_ORIGIN' })
   assert.equal(readers.zai, undefined)
   assert.equal(calls, 0)
+})
+
+test('DeepSeek accepts only official root, slash, and v1 bases and returns bounded failures', async () => {
+  for (const baseURL of ['https://api.deepseek.com', 'https://api.deepseek.com/', 'https://api.deepseek.com/v1', 'https://api.deepseek.com/anthropic/']) {
+    const ctx = context({ providers: [{ provider: 'deepseek-official', settingsNs: 'deep', settingsPath: [] }], settings: { deep: { baseURL, apiKeyEnv: 'DEEP' } }, credentials: { DEEP: { value: 'fictional' } } })
+    const readers = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers, fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({}) }) })
+    assert.deepEqual(await readers['deepseek-official'](), { unavailableReason: 'CREDENTIALS_REJECTED' })
+  }
+  for (const baseURL of ['http://api.deepseek.com', 'https://proxy.invalid', 'https://api.deepseek.com/other', 'https://x@api.deepseek.com', 'https://api.deepseek.com/?x=1', 'https://api.deepseek.com/#x']) {
+    const ctx = context({ providers: [{ provider: 'deepseek-official', settingsNs: 'deep', settingsPath: [] }], settings: { deep: { baseURL } } })
+    const readers = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers })
+    assert.deepEqual(await readers['deepseek-official'](), { unavailableReason: 'UNRECOGNIZED_ORIGIN' }, baseURL)
+  }
+})
+
+test('DeepSeek reports missing configuration without resolving credentials or fetching', async () => {
+  const ctx = context({ providers: [{ provider: 'deepseek-official', settingsNs: 'deep', settingsPath: [] }] })
+  const readers = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers, fetchImpl: async () => { throw new Error('must not fetch') } })
+  assert.deepEqual(await readers['deepseek-official'](), { unavailableReason: 'MISSING_CONFIG' })
+  assert.deepEqual(ctx.calls, [])
 })
 
 test('per-route cache deduplicates pending reads and drops a result after its generation becomes inactive', async () => {
