@@ -14,4 +14,5 @@ test('native helper self-test reports every named check', () => {
   assert.equal(Object.values(report.checks).every(Boolean), true)
   assert.equal(report.checks.taskIconConsistent, true)
   assert.equal(report.checks.providerBadgeAliases, true)
+  assert.equal(report.checks.notificationSound, true)
 })

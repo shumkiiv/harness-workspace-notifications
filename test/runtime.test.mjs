@@ -30,13 +30,15 @@ test('runtime sends PascalCase settings once and persists UI changes without ech
   const runtime = createRuntime(ctx, {
     dataDir: temporary,
     createHelper(options) {
+      assert.equal(options.dataDir, path.resolve(temporary))
       incoming = options.onMessage
       return helper
     },
   })
   assert.equal(sent[0].t, 'settings.apply')
+  assert.equal(sent[0].settings.NotificationSound, false)
   const before = sent.filter((item) => item.t === 'settings.apply').length
-  incoming({ t: 'settings.changed', settings: { FieldPath: false, WidgetX: 13 } })
+  incoming({ t: 'settings.changed', settings: { FieldPath: false, WidgetX: 13, NotificationSound: true } })
   assert.equal(sent.filter((item) => item.t === 'settings.apply').length, before)
   incoming({ t: 'widget.moved', x: 130, y: 131 })
   listeners.get('session/event')(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } }, time: 10 })
@@ -48,7 +50,9 @@ test('runtime sends PascalCase settings once and persists UI changes without ech
   listeners.get('session/event')(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } }, time: 11 })
   assert.equal(sent.filter((item) => item.t === 'notice.show').length, 1)
   assert.equal(runtime.settings().WidgetX, 130)
-  assert.equal(JSON.parse(fs.readFileSync(path.join(temporary, 'settings.json'), 'utf8')).FieldPath, false)
+  const persisted = JSON.parse(fs.readFileSync(path.join(temporary, 'settings.json'), 'utf8'))
+  assert.equal(persisted.FieldPath, false)
+  assert.equal(persisted.NotificationSound, true)
   await runtime.close()
   fs.rmSync(temporary, { recursive: true, force: true })
 })

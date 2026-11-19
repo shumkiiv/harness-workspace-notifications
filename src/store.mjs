@@ -5,6 +5,7 @@ import { capOutcomes } from './core.mjs'
 export const DEFAULT_SETTINGS = Object.freeze({
   ShowWidget: true,
   ShowNotifications: true,
+  NotificationSound: false,
   SubagentNotices: false,
   FieldWorkspace: true,
   FieldTask: true,

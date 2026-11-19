@@ -15,6 +15,7 @@ public class Settings
 {
     public bool ShowWidget { get; set; }
     public bool ShowNotifications { get; set; }
+    public bool NotificationSound { get; set; }
     public bool SubagentNotices { get; set; }
     public bool FieldWorkspace { get; set; }
     public bool FieldTask { get; set; }
@@ -134,7 +135,8 @@ public sealed class SettingsForm : Form
 
     public Button SaveButton { get; private set; }
 
-    public SettingsForm(Settings current, Action<Settings> onChanged, List<Dictionary<string, object>> providers)
+    public SettingsForm(Settings current, Action<Settings> onChanged, List<Dictionary<string, object>> providers,
+        Action previewSound = null)
     {
         value = current;
         changed = onChanged;
@@ -171,6 +173,18 @@ public sealed class SettingsForm : Form
         page = 0;
         Add("show-widget", "Показывать виджет", value.ShowWidget, ref top);
         Add("show-notices", "Показывать уведомления", value.ShowNotifications, ref top);
+        Add("notice-sound", "Звук уведомлений", value.NotificationSound, ref top);
+        if (previewSound != null)
+        {
+            Button preview = new Button { Text = "Прослушать звук", FlatStyle = FlatStyle.Flat,
+                ForeColor = Graphite.Primary, BackColor = Graphite.Card };
+            preview.FlatAppearance.BorderColor = Graphite.Border;
+            preview.SetBounds(RowInset, top, 132, 23);
+            preview.Click += delegate { previewSound(); };
+            Controls.Add(preview);
+            pages.Add(preview, page);
+            top += 26;
+        }
         Add("subagent-notices", "Уведомления субагентов", value.SubagentNotices, ref top);
         Add("compact-widget", "Компактный вид", value.CompactWidget, ref top);
         Add("compact-workspace-list", "Короткий список областей: имя и состояние", value.CompactWorkspaceList, ref top);
@@ -365,6 +379,7 @@ public sealed class SettingsForm : Form
         bool wasCompactWorkspaceList = value.CompactWorkspaceList;
         value.ShowWidget = checks["show-widget"].Checked;
         value.ShowNotifications = checks["show-notices"].Checked;
+        value.NotificationSound = checks["notice-sound"].Checked;
         value.SubagentNotices = checks["subagent-notices"].Checked;
         value.FieldWorkspace = checks["field-workspace"].Checked;
         value.FieldTask = checks["field-task"].Checked;
@@ -697,6 +712,13 @@ public sealed class DshNotifyGui : Form
     private const int NoticeStackWidth = 352;
     private const int NoticeStackHeightLimit = 420;
     private const int NonClientLeftButtonDown = 0x00A1;
+    private const uint AsyncSoundFile = 0x00020000 | 0x0001 | 0x0002;
+
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PlaySoundW(string path, IntPtr module, uint flags);
+
+    private readonly Action playNoticeSound;
     private const int CaptionHit = 2;
 
     [DllImport("user32.dll")]
@@ -756,8 +778,14 @@ public sealed class DshNotifyGui : Form
     }
 
     public DshNotifyGui(bool demo, Action<string> callback)
+        : this(demo, callback, PlayNotificationSound)
+    {
+    }
+
+    internal DshNotifyGui(bool demo, Action<string> callback, Action sound)
     {
         demoMode = demo;
+        playNoticeSound = sound;
         outputCallback = callback;
         if (outputCallback == null)
         {
@@ -1079,14 +1107,12 @@ public sealed class DshNotifyGui : Form
         }
         else if (type == "notice.show")
         {
-            StoreNotice(message);
+            bool added = StoreNotice(message);
             RenderNotices();
-            if (Settings.ShowNotifications)
+            if (Settings.ShowNotifications && !noticesManuallyHidden)
             {
-                if (!noticesManuallyHidden)
-                {
-                    ShowNotices();
-                }
+                if (added && Settings.NotificationSound && IsVisible(StatusOf(message))) playNoticeSound();
+                ShowNotices();
             }
         }
         else if (type == "shutdown")
@@ -1219,18 +1245,20 @@ public sealed class DshNotifyGui : Form
         return Int32.TryParse(Convert.ToString(value), out result) ? result : 0;
     }
 
-    private void StoreNotice(Dictionary<string, object> message)
+    private bool StoreNotice(Dictionary<string, object> message)
     {
         string id = TextOf(message, "id");
         if (String.IsNullOrEmpty(id))
         {
-            return;
+            return false;
         }
-        if (!notices.ContainsKey(id))
+        bool added = !notices.ContainsKey(id);
+        if (added)
         {
             noticeOrder.Add(id);
         }
         notices[id] = new Dictionary<string, object>(message);
+        return added;
     }
 
     private void Render()
@@ -1739,7 +1767,7 @@ public sealed class DshNotifyGui : Form
 
     private void ShowSettings()
     {
-        SettingsForm form = new SettingsForm(Settings, UserChanged, availableLimitProviders);
+        SettingsForm form = new SettingsForm(Settings, UserChanged, availableLimitProviders, playNoticeSound);
         settingsForms.Add(form);
         form.FormClosed += delegate
         {
@@ -1748,6 +1776,16 @@ public sealed class DshNotifyGui : Form
         AddOwnedForm(form);
         form.Show(this);
         form.Activate();
+    }
+
+    private static void PlayNotificationSound()
+    {
+        string dataDir = Environment.GetEnvironmentVariable("DSH_WN_DATA_DIR");
+        if (String.IsNullOrEmpty(dataDir))
+            dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh", "workspace-notifications");
+        string file = Path.Combine(dataDir, "icq-message.wav");
+        if (!File.Exists(file) || !PlaySoundW(file, IntPtr.Zero, AsyncSoundFile))
+            System.Media.SystemSounds.Asterisk.Play();
     }
 
     private void ResizeNoticeStack()
@@ -1888,6 +1926,9 @@ public sealed class DshNotifyGui : Form
         SettingsForm form = new SettingsForm(settings, delegate(Settings changed) { }, new List<Dictionary<string, object>>());
         form.Check("field-time").Checked = false;
         bool checkbox = !settings.FieldTime;
+        bool soundDisabledByDefault = !settings.NotificationSound;
+        form.Check("notice-sound").Checked = true;
+        bool soundCheckbox = settings.NotificationSound;
         form.Dispose();
         Form location = new Form();
         location.Width = 100;
@@ -1905,10 +1946,11 @@ public sealed class DshNotifyGui : Form
         bool countdown = LimitsPanel.Countdown(0) == "сброс доступен"
             && LimitsPanel.Countdown((long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds + 59) == "<1 мин";
         List<string> output = new List<string>();
+        int soundCount = 0;
         DshNotifyGui gui = new DshNotifyGui(false, delegate(string line)
         {
             output.Add(line);
-        });
+        }, delegate { soundCount++; });
         bool iconDrawn;
         using (Bitmap iconBitmap = new Bitmap(gui.taskGlyph.Width, gui.taskGlyph.Height))
         {
@@ -2020,6 +2062,23 @@ public sealed class DshNotifyGui : Form
         gui.Process("{\"t\":\"widget.render\",\"rows\":["
             + "{\"id\":\"running\",\"title\":\"Alpha 2\",\"status\":\"running\"}]}");
         bool rowsReplaced = gui.rows.Controls.Count == 1 && HasText(gui.rows, "Alpha 2");
+        bool silentUntilEnabled = soundCount == 0;
+        settings.NotificationSound = true;
+        gui.ApplyRemote(settings);
+        string newNotice = "{\"t\":\"notice.show\",\"id\":\"test-audio\",\"reason\":\"completed\"}";
+        gui.Process(newNotice);
+        gui.Process(newNotice);
+        gui.Render();
+        gui.HideNoticeStack();
+        gui.Process("{\"t\":\"notice.show\",\"id\":\"test-audio-hidden\",\"reason\":\"completed\"}");
+        gui.ShowNotices();
+        settings.StatusError = false;
+        gui.ApplyRemote(settings);
+        gui.Process("{\"t\":\"notice.show\",\"id\":\"test-audio-filtered\",\"reason\":\"error\"}");
+        settings.ShowNotifications = false;
+        gui.ApplyRemote(settings);
+        gui.Process("{\"t\":\"notice.show\",\"id\":\"test-audio-muted\",\"reason\":\"completed\"}");
+        bool notificationSound = soundDisabledByDefault && soundCheckbox && silentUntilEnabled && soundCount == 1;
         gui.Dispose();
         Image deepSeekBadge = LimitsPanel.ProviderBadge("deepseek-account", "DeepSeek Account");
         Image codexBadge = LimitsPanel.ProviderBadge("openai-codex", "Codex");
@@ -2029,7 +2088,7 @@ public sealed class DshNotifyGui : Form
             && deepSeekBadge == LimitsPanel.ProviderBadge("configured-api-route", "DeepSeek")
             && new[] { deepSeekBadge, codexBadge, zaiBadge, genericBadge }.Distinct().Count() == 4;
         bool passed = checkbox && position && clamp && settingsRoundTrip && newSettings && iconDrawn
-            && taskIconConsistent && providerBadgeAliases && countdown && taskTitle && moveEmitted && moveStored;
+            && taskIconConsistent && providerBadgeAliases && notificationSound && countdown && taskTitle && moveEmitted && moveStored;
         passed = passed && noEcho && allRowsShown && allNoticesShown && interactionIds && registeredIdleFiltered;
         passed = passed && matrix && fieldsHidden && rowsReplaced && compactToggle && noticePresentation
             && completedRowFirst && completedNoticeFirst && noticeHeightAndWidth && fixedWidgetWidth && wholeCardScroll;
@@ -2042,6 +2101,7 @@ public sealed class DshNotifyGui : Form
             + ",\"iconDrawn\":" + JsonBool(iconDrawn)
             + ",\"taskIconConsistent\":" + JsonBool(taskIconConsistent)
             + ",\"providerBadgeAliases\":" + JsonBool(providerBadgeAliases)
+            + ",\"notificationSound\":" + JsonBool(notificationSound)
             + ",\"countdown\":" + JsonBool(countdown)
             + ",\"taskTitle\":" + JsonBool(taskTitle)
             + ",\"moveEmitted\":" + JsonBool(moveEmitted)

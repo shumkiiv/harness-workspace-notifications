@@ -54,6 +54,7 @@ export function createRuntime(ctx, options = {}) {
   else attachBridge(ctx)
   const helper = (options.createHelper || launchHelper)({
     helperPath: options.helperPath || path.join(root, 'native', 'DshNotifyGui.exe'),
+    dataDir: path.resolve(dataDir),
     demo: Boolean(options.demo),
     demoArgs: options.demoArgs || [],
     logger,
