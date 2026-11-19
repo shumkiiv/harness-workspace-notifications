@@ -76,4 +76,6 @@ test('settings are PascalCase, validated, and preserve move coordinates', () => 
   assert.equal(settings.WidgetX, 12)
   assert.equal('Unknown' in settings, false)
   assert.equal(DEFAULT_SETTINGS.SubagentNotices, false)
+  assert.equal(DEFAULT_SETTINGS.ThemeDark, true)
+  assert.equal(DEFAULT_SETTINGS.ShowLimits, false)
 })

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 
-export function launchHelper({ helperPath, demo = false, onMessage, logger = console, spawnProcess = spawn }) {
+export function launchHelper({ helperPath, demo = false, demoArgs = [], onMessage, logger = console, spawnProcess = spawn }) {
   let child
   let closed = false
   let stdinBroken = false
@@ -26,7 +26,7 @@ export function launchHelper({ helperPath, demo = false, onMessage, logger = con
     resolveTerminal()
   }
   try {
-    child = spawnProcess(helperPath, demo ? ['--demo'] : [], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+    child = spawnProcess(helperPath, demo ? ['--demo', ...demoArgs] : [], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
   } catch (error) {
     warn(`Графическое окно недоступно: ${error.message}`)
     return unavailable()

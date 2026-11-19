@@ -1,37 +1,77 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 
 public static class Graphite
 {
-    public static readonly Color Base = Color.FromArgb(30, 33, 38);
-    public static readonly Color Card = Color.FromArgb(38, 42, 49);
-    public static readonly Color Border = Color.FromArgb(52, 58, 68);
-    public static readonly Color Primary = Color.FromArgb(232, 234, 237);
-    public static readonly Color Secondary = Color.FromArgb(169, 177, 187);
+    public static bool IsDark { get; private set; }
+    public static Color Base { get; private set; }
+    public static Color Card { get; private set; }
+    public static Color Border { get; private set; }
+    public static Color Primary { get; private set; }
+    public static Color Secondary { get; private set; }
+    public static Color QuotaLow { get; private set; }
+    public static Color QuotaMedium { get; private set; }
+    public static Color QuotaHigh { get; private set; }
     public static readonly Color Running = Color.FromArgb(127, 179, 224);
     public static readonly Color Completed = Color.FromArgb(127, 194, 154);
     public static readonly Color Issue = Color.FromArgb(224, 147, 122);
 
+    static Graphite()
+    {
+        ApplyTheme(true);
+    }
+
+    public static void ApplyTheme(bool dark)
+    {
+        IsDark = dark;
+        Base = dark ? Color.FromArgb(30, 33, 38) : Color.FromArgb(245, 247, 250);
+        Card = dark ? Color.FromArgb(38, 42, 49) : Color.FromArgb(255, 255, 255);
+        Border = dark ? Color.FromArgb(52, 58, 68) : Color.FromArgb(205, 211, 218);
+        Primary = dark ? Color.FromArgb(232, 234, 237) : Color.FromArgb(35, 40, 46);
+        Secondary = dark ? Color.FromArgb(169, 177, 187) : Color.FromArgb(92, 101, 112);
+        QuotaLow = dark ? Color.FromArgb(170, 108, 102) : Color.FromArgb(181, 111, 101);
+        QuotaMedium = dark ? Color.FromArgb(176, 151, 97) : Color.FromArgb(165, 136, 76);
+        QuotaHigh = dark ? Color.FromArgb(105, 159, 132) : Color.FromArgb(80, 137, 111);
+    }
+
+    public static void DrawTaskIcon(Graphics graphics, Rectangle rectangle, Color color)
+    {
+        int unit = Math.Max(1, Math.Min(rectangle.Width, rectangle.Height) / 8);
+        Rectangle page = new Rectangle(rectangle.Left + unit * 2, rectangle.Top + unit, unit * 5, unit * 6);
+        using (Pen pen = new Pen(color, Math.Max(1F, unit)))
+        {
+            graphics.DrawRectangle(pen, page);
+            graphics.DrawLine(pen, page.Left + unit, page.Top - unit, page.Right - unit, page.Top - unit);
+            for (int index = 0; index < 2; index++)
+            {
+                int y = page.Top + unit * (2 + index * 2);
+                graphics.DrawLine(pen, page.Left + unit, y, page.Left + unit * 2, y + unit);
+                graphics.DrawLine(pen, page.Left + unit * 2, y + unit, page.Left + unit * 3, y - unit);
+                graphics.DrawLine(pen, page.Left + unit * 4, y, page.Right - unit, y);
+            }
+        }
+    }
+
     public static Color Accent(string status)
     {
-        if (String.Equals(status, "running", StringComparison.OrdinalIgnoreCase)) return Running;
-        if (String.Equals(status, "completed", StringComparison.OrdinalIgnoreCase)) return Completed;
+        if (String.Equals(status, "running", StringComparison.OrdinalIgnoreCase)) return IsDark ? Running : Color.FromArgb(45, 103, 151);
+        if (String.Equals(status, "completed", StringComparison.OrdinalIgnoreCase)) return IsDark ? Completed : Color.FromArgb(45, 115, 75);
         if (String.Equals(status, "error", StringComparison.OrdinalIgnoreCase)
             || String.Equals(status, "blocked", StringComparison.OrdinalIgnoreCase)
             || String.Equals(status, "max-tokens", StringComparison.OrdinalIgnoreCase)
             || String.Equals(status, "aborted", StringComparison.OrdinalIgnoreCase)
-            || String.Equals(status, "interrupted", StringComparison.OrdinalIgnoreCase)) return Issue;
+            || String.Equals(status, "interrupted", StringComparison.OrdinalIgnoreCase)) return IsDark ? Issue : Color.FromArgb(151, 69, 51);
         return Secondary;
     }
 
     public static Color ChipFill(string status)
     {
-        if (String.Equals(status, "running", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(31, 44, 56);
-        if (String.Equals(status, "completed", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(31, 47, 39);
-        if (Accent(status) == Issue) return Color.FromArgb(51, 39, 36);
-        return Color.FromArgb(42, 46, 53);
+        if (String.Equals(status, "running", StringComparison.OrdinalIgnoreCase)) return IsDark ? Color.FromArgb(31, 44, 56) : Color.FromArgb(224, 239, 249);
+        if (String.Equals(status, "completed", StringComparison.OrdinalIgnoreCase)) return IsDark ? Color.FromArgb(31, 47, 39) : Color.FromArgb(225, 242, 232);
+        if (Accent(status) == Issue) return IsDark ? Color.FromArgb(51, 39, 36) : Color.FromArgb(250, 229, 223);
+        return Card;
     }
 }
 
@@ -225,8 +265,8 @@ public sealed class CompactWidgetControl : Control
     public CompactWidgetControl()
     {
         DoubleBuffered = true;
-        BackColor = Color.FromArgb(30, 33, 38);
-        ForeColor = Color.FromArgb(232, 234, 237);
+        BackColor = Graphite.Base;
+        ForeColor = Graphite.Primary;
         MinimumSize = new Size(230, 85);
     }
 
@@ -243,8 +283,8 @@ public sealed class CompactWidgetControl : Control
         Graphics graphics = eventArgs.Graphics;
         graphics.Clear(BackColor);
         Rectangle bounds = ClientRectangle;
-        using (Brush surface = new SolidBrush(Color.FromArgb(38, 42, 49)))
-        using (Pen border = new Pen(Color.FromArgb(52, 58, 68)))
+        using (Brush surface = new SolidBrush(Graphite.Card))
+        using (Pen border = new Pen(Graphite.Border))
         {
             graphics.FillRectangle(surface, bounds);
             graphics.DrawRectangle(border, 0, 0, Math.Max(0, bounds.Width - 1), Math.Max(0, bounds.Height - 1));
@@ -263,8 +303,8 @@ public sealed class CompactWidgetControl : Control
 
     private void DrawEmpty(Graphics graphics)
     {
-        DrawText(graphics, "Нет активности", new Rectangle(12, 28, Width - 24, 24), 10F, Color.FromArgb(232, 234, 237));
-        DrawText(graphics, "Новые задачи появятся здесь", new Rectangle(12, 56, Width - 24, 20), 8F, Color.FromArgb(121, 129, 140));
+        DrawText(graphics, "Нет активности", new Rectangle(12, 28, Width - 24, 24), 10F, Graphite.Primary);
+        DrawText(graphics, "Новые задачи появятся здесь", new Rectangle(12, 56, Width - 24, 20), 8F, Graphite.Secondary);
     }
 
     private void DrawMetrics(Graphics graphics)
@@ -275,18 +315,18 @@ public sealed class CompactWidgetControl : Control
         int width = Math.Max(58, (Width - 40) / 3);
         DrawMetric(graphics, new Rectangle(12, 14, width, 42), 0, running, "активных", Color.FromArgb(127, 179, 224));
         DrawMetric(graphics, new Rectangle(20 + width, 14, width, 42), 1, completed, "готово", Color.FromArgb(127, 194, 154));
-        DrawMetric(graphics, new Rectangle(28 + width * 2, 14, width, 42), 2, issues, "прочее", Color.FromArgb(169, 177, 187));
+        DrawMetric(graphics, new Rectangle(28 + width * 2, 14, width, 42), 2, issues, "прочее", Graphite.Secondary);
     }
 
     private void DrawMetric(Graphics graphics, Rectangle rectangle, int kind, int value, string label, Color accent)
     {
-        using (Pen border = new Pen(Color.FromArgb(52, 58, 68)))
+        using (Pen border = new Pen(Graphite.Border))
         {
             graphics.DrawRectangle(border, rectangle);
         }
         DrawIcon(graphics, new Rectangle(rectangle.Left + 5, rectangle.Top + 6, 12, 12), kind, accent);
-        DrawText(graphics, Convert.ToString(value), new Rectangle(rectangle.Left + 21, rectangle.Top + 4, rectangle.Width - 24, 20), 14F, Color.FromArgb(232, 234, 237));
-        DrawText(graphics, label, new Rectangle(rectangle.Left + 5, rectangle.Top + 25, rectangle.Width - 8, 14), 7F, Color.FromArgb(169, 177, 187));
+        DrawText(graphics, Convert.ToString(value), new Rectangle(rectangle.Left + 21, rectangle.Top + 4, rectangle.Width - 24, 20), 14F, Graphite.Primary);
+        DrawText(graphics, label, new Rectangle(rectangle.Left + 5, rectangle.Top + 25, rectangle.Width - 8, 14), 7F, Graphite.Secondary);
     }
 
     private static void DrawIcon(Graphics graphics, Rectangle rectangle, int kind, Color color)
@@ -328,7 +368,7 @@ public sealed class CompactWidgetControl : Control
         int completedWidth = width * completed / total;
         using (Brush runningBrush = new SolidBrush(Color.FromArgb(127, 179, 224)))
         using (Brush completedBrush = new SolidBrush(Color.FromArgb(127, 194, 154)))
-        using (Brush neutralBrush = new SolidBrush(Color.FromArgb(121, 129, 140)))
+        using (Brush neutralBrush = new SolidBrush(Graphite.Secondary))
         {
             graphics.FillRectangle(runningBrush, 12, top, runningWidth, 5);
             graphics.FillRectangle(completedBrush, 12 + runningWidth, top, completedWidth, 5);

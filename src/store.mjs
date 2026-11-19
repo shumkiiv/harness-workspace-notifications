@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   FieldPath: true,
   WidgetCounts: true,
   CompactWidget: true,
+  ThemeDark: true,
+  ShowLimits: false,
   StatusRunning: true,
   StatusCompleted: true,
   StatusError: true,

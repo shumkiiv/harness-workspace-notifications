@@ -16,6 +16,7 @@ export function createDemoContext() {
         turnBoundaryOf: () => undefined,
       }
       if (name === 'sessions') return { get: (id) => sessions.get(id) }
+      if (name === 'llm') return { listProviders: () => [{ id: 'openai-codex', name: 'Codex (демо)' }, { id: 'demo-other', name: 'Другой ИИ (демо)' }] }
       return undefined
     },
     on(name, listener) {

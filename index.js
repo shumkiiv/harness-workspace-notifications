@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { Tracker, aggregate, reasonText, summary, workspaceFor } from './src/core.mjs'
 import { openStore, normalizeSettings } from './src/store.mjs'
 import { launchHelper } from './src/helper.mjs'
+import { buildLimitsPayload } from './src/limits.mjs'
+import { setupQuotaBridge } from './src/quota/bridge.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 
@@ -20,6 +22,7 @@ export function createRuntime(ctx, options = {}) {
     || path.join(os.homedir(), '.dsh', 'workspace-notifications')
   const store = openStore(dataDir, logger)
   let settings = store.settings()
+  const bridge = setupQuotaBridge(ctx, () => settings)
   let outcomes = store.outcomes()
   const tracker = new Tracker({
     turnBoundaryOf(session) {
@@ -29,10 +32,12 @@ export function createRuntime(ctx, options = {}) {
   const helper = (options.createHelper || launchHelper)({
     helperPath: options.helperPath || path.join(root, 'native', 'DshNotifyGui.exe'),
     demo: Boolean(options.demo),
+    demoArgs: options.demoArgs || [],
     logger,
     onMessage: receive,
   })
   let timer
+  let limitsTimer
   let closed = false
   for (const outcome of outcomes) tracker.emitted.add(outcome.id)
 
@@ -103,6 +108,22 @@ export function createRuntime(ctx, options = {}) {
     } catch (error) {
       logger.warn?.(`Не удалось обновить виджет: ${error.message}`)
     }
+  }
+
+  async function refreshLimits() {
+    if (closed) return
+    const llm = ctx.get?.('llm')
+    if (!llm || typeof llm.listProviders !== 'function') return
+    const readers = {}
+    if (typeof options.readProviderQuota === 'function') {
+      try {
+        const providers = await llm.listProviders()
+        if (Array.isArray(providers)) for (const provider of providers) if (provider?.id) readers[provider.id] = options.readProviderQuota
+      } catch { return }
+    }
+    else readers['openai-codex'] = bridge.read
+    const payload = await buildLimitsPayload({ listProviders: () => llm.listProviders(), readers })
+    helper.send({ t: 'widget.limits', providers: payload.providers, receivedAt: payload.receivedAt })
   }
 
   function receive(message) {
@@ -183,7 +204,9 @@ export function createRuntime(ctx, options = {}) {
   ctx.on?.('session/disposed', onDisposed)
   ctx.on?.('agent/status', render)
   timer = setInterval(render, 1500)
+  limitsTimer = setInterval(refreshLimits, 60000)
   render()
+  refreshLimits()
 
   return {
     render,
@@ -196,6 +219,8 @@ export function createRuntime(ctx, options = {}) {
       if (closed) return
       closed = true
       clearInterval(timer)
+      clearInterval(limitsTimer)
+      bridge.close()
       await helper.close()
     },
   }
