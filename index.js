@@ -5,6 +5,7 @@ import { Tracker, aggregate, reasonText, summary, workspaceFor, uniqueWorkspaceB
 import { openStore, normalizeSettings } from './src/store.mjs'
 import { launchHelper } from './src/helper.mjs'
 import { buildLimitsPayload } from './src/limits.mjs'
+import { createProviderUsageReaders } from './src/providerUsage.mjs'
 import { setupQuotaBridge } from './src/quota/bridge.mjs'
 import { setupSessionOpenBridge } from './src/sessionOpen.mjs'
 
@@ -61,6 +62,7 @@ export function createRuntime(ctx, options = {}) {
   let timer
   let limitsTimer
   let accountBalanceCache = { at: 0, value: null, pending: null }
+  const providerUsageCache = new Map()
   let limitsGeneration = 0
   let closed = false
   for (const outcome of outcomes) tracker.emitted.add(outcome.id)
@@ -162,6 +164,18 @@ export function createRuntime(ctx, options = {}) {
     if (typeof options.readProviderQuota === 'function') {
       for (const provider of catalog) readers[provider.id] = options.readProviderQuota
     } else if (enabled && !hidden.includes('openai-codex')) readers['openai-codex'] = bridge.read
+    if (enabled && typeof options.readProviderQuota !== 'function') {
+      let configurable
+      try { configurable = await llm.listConfigurableProviders?.() } catch { configurable = [] }
+      if (!current()) return
+      const usageReaders = await createProviderUsageReaders({ ctx, configurableProviders: configurable, current,
+        eligible: (id) => !closed && settings.ShowLimits === true && !settings.HiddenLimitProviders.includes(id), cache: providerUsageCache })
+      if (!current()) return
+      const available = new Set(catalog.map((item) => item.id))
+      for (const id of ['deepseek-official', 'zai']) {
+        if (available.has(id) && !hidden.includes(id) && usageReaders[id]) readers[id] = usageReaders[id]
+      }
+    }
     if (enabled && account && typeof account.getBalance === 'function' && !hidden.includes('deepseek-account')) {
       readers['deepseek-account'] = async () => {
         if (!current() || settings.HiddenLimitProviders.includes('deepseek-account')) return null

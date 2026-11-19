@@ -19,12 +19,10 @@ export async function buildLimitsPayload({ listProviders, readers = {}, now = Da
   try { providers = await listProviders() } catch { return { providers: [] } }
   if (!Array.isArray(providers)) return { providers: [] }
   const hidden = new Set(hiddenProviders)
-  const result = []
-  for (const provider of providers) {
-    if (!provider || !provider.id) continue
-    if (hidden.has(provider.id)) continue
+  const result = await Promise.all(providers.map(async (provider) => {
+    if (!provider || !provider.id || hidden.has(provider.id)) return null
     const reader = readers[provider.id]
-    if (!reader) { result.push(unavailable(provider)); continue }
+    if (!reader) return unavailable(provider)
     let raw
     try { raw = await reader({ now, provider }) } catch { raw = null }
     const windows = Array.isArray(raw) ? raw : raw?.windows
@@ -36,13 +34,13 @@ export async function buildLimitsPayload({ listProviders, readers = {}, now = Da
       ...(raw.individualLimit && typeof raw.individualLimit === 'object' ? { individualLimit: raw.individualLimit } : {}),
       ...(Array.isArray(raw.amounts) && raw.amounts.length ? { amounts: raw.amounts } : {}),
     } : {}
-    result.push(valid.length || Object.keys(rich).length ? {
+    return valid.length || Object.keys(rich).length ? {
       id: String(provider.id), label: String(provider.name || provider.label || provider.id), state: 'ok',
       ...rich,
       ...(valid.length ? { windows: valid.map((item) => ({ label: item.label || humanizeWindow(item.windowSeconds), percent: item.percent,
         windowSeconds: item.windowSeconds, resetAt: Number.isFinite(item.resetAt) ? item.resetAt : null })),
       } : {}),
-    } : unavailable(provider))
-  }
-  return { providers: result, receivedAt: now }
+    } : unavailable(provider)
+  }))
+  return { providers: result.filter(Boolean), receivedAt: now }
 }
