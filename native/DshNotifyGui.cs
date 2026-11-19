@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -454,6 +455,16 @@ public sealed class TaskGlyph : Control
 
 public sealed class LimitsPanel : Control
 {
+    private const int FirstRowTop = 4;
+    private const int RowHeight = 18;
+    private const int ProviderTextLeft = 27;
+    private static readonly CultureInfo AmountCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly Image DeepSeekLogo = LoadProviderLogo("deepseek.png");
+    private static readonly Image CodexLogo = LoadProviderLogo("codex.png");
+    private static readonly Image ZaiLightLogo = LoadProviderLogo("zai-light.png");
+    private static readonly Image ZaiDarkLogo = LoadProviderLogo("zai-dark.png");
+    private const TextFormatFlags CompactText = TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis
+        | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
     private List<Dictionary<string, object>> providers = new List<Dictionary<string, object>>();
     private DateTime receivedAt = DateTime.MinValue;
     private readonly ToolTip hints = new ToolTip();
@@ -471,9 +482,10 @@ public sealed class LimitsPanel : Control
         providers = (value ?? new List<Dictionary<string, object>>()).OrderByDescending(ProviderAvailable).ToList();
         receivedAt = received;
         int lines = 0;
-        foreach (Dictionary<string, object> provider in providers) lines += Math.Max(1, ValueList(provider, "windows").Count + MetricText(provider).Count);
-        Height = Math.Max(22, 4 + lines * 18);
-        AccessibleDescription = String.Join(", ", providers.Select(provider => Field(provider, "label")).ToArray());
+        foreach (Dictionary<string, object> provider in providers)
+            lines += HasCurrentData(provider) ? ValueList(provider, "windows").Count + MetricText(provider).Count : 1;
+        Height = Math.Max(22, FirstRowTop + lines * RowHeight);
+        AccessibleDescription = String.Join(", ", providers.Select(ProviderName).ToArray());
         Invalidate();
     }
 
@@ -484,62 +496,61 @@ public sealed class LimitsPanel : Control
         Graphics graphics = eventArgs.Graphics;
         graphics.Clear(Graphite.Base);
         using (Font detail = new Font("Segoe UI", 7.5F, FontStyle.Regular))
-        using (Brush primary = new SolidBrush(Graphite.Primary))
-        using (Brush secondary = new SolidBrush(Graphite.Secondary))
         {
             if (providers.Count == 0)
             {
-                graphics.DrawString("Нет подключённых служб", detail, secondary, 8, 6);
+                TextRenderer.DrawText(graphics, "Нет выбранных служб", detail, new Point(8, 6), Graphite.Secondary);
                 return;
             }
-            bool stale = receivedAt == DateTime.MinValue || (DateTime.UtcNow - receivedAt).TotalMinutes > 10;
-            int top = 4;
+            int width = Parent == null ? ClientSize.Width : Math.Min(ClientSize.Width, Parent.ClientSize.Width);
+            int dataLeft = Math.Min(117, Math.Max(ProviderTextLeft + 21, width / 2));
+            int dataWidth = Math.Max(1, width - dataLeft - 6);
+            int top = FirstRowTop;
             foreach (Dictionary<string, object> provider in providers)
             {
-                List<Dictionary<string, object>> windows = ValueList(provider, "windows");
-                List<string> metrics = MetricText(provider);
-                bool ok = !stale && String.Equals(Field(provider, "state"), "ok", StringComparison.Ordinal) && windows.Count > 0;
-                bool usable = !stale && String.Equals(Field(provider, "state"), "ok", StringComparison.Ordinal);
-                if (ok)
+                DrawProviderLogo(graphics, Field(provider, "id"), top);
+                TextRenderer.DrawText(graphics, ProviderName(provider), detail,
+                    new Rectangle(ProviderTextLeft, top, dataLeft - ProviderTextLeft - 5, RowHeight),
+                    Graphite.Primary, CompactText | TextFormatFlags.VerticalCenter);
+                if (!HasCurrentData(provider))
                 {
-                    foreach (Dictionary<string, object> window in windows)
-                    {
-                        DrawProviderMark(graphics, Field(provider, "id"), top, detail, primary);
-                        Rectangle track = new Rectangle(28, top + 8, Math.Max(34, Math.Min(70, Width / 3)), 4);
-                        using (Brush trackBrush = new SolidBrush(Graphite.Border)) graphics.FillRectangle(trackBrush, track);
-                        double percent = ToDouble(window["percent"]);
-                        Color tier = percent < 25 ? Graphite.QuotaLow : (percent < 60 ? Graphite.QuotaMedium : Graphite.QuotaHigh);
-                        using (Brush fill = new SolidBrush(tier)) graphics.FillRectangle(fill, track.X, track.Y, Math.Max(0, (int)(track.Width * percent / 100.0)), track.Height);
-                        string reset = HasNumber(window, "resetAt") ? Countdown(ToLong(window, "resetAt")) : "срок неизвестен";
-                        graphics.DrawString(Field(window, "label") + " " + Math.Round(percent) + "% · " + reset, detail, secondary, track.Right + 5, top + 1);
-                        top += 18;
-                    }
+                    TextRenderer.DrawText(graphics, "Нет данных", detail, new Rectangle(dataLeft, top, dataWidth, RowHeight),
+                        Graphite.Secondary, CompactText | TextFormatFlags.VerticalCenter);
+                    top += RowHeight;
+                    continue;
                 }
-                if (usable)
+                foreach (Dictionary<string, object> window in ValueList(provider, "windows"))
                 {
-                    foreach (string metric in metrics)
-                    {
-                        DrawProviderMark(graphics, Field(provider, "id"), top, detail, primary);
-                        graphics.DrawString(metric, detail, secondary, 28, top + 2);
-                        top += 18;
-                    }
+                    double percent = ToDouble(window["percent"]);
+                    string period = Field(window, "label");
+                    if (period == "7 дней") period = "7 дн.";
+                    string reset = HasNumber(window, "resetAt") ? Countdown(ToLong(window, "resetAt"), true) : "";
+                    string caption = period + " · " + Math.Round(percent) + "%" + (reset.Length == 0 ? "" : " · " + reset);
+                    TextRenderer.DrawText(graphics, caption, detail,
+                        new Rectangle(dataLeft, top, dataWidth, RowHeight - 4), Graphite.Primary, CompactText);
+                    Rectangle track = new Rectangle(dataLeft, top + RowHeight - 4, Math.Min(70, dataWidth), 3);
+                    using (Brush trackBrush = new SolidBrush(Graphite.Border)) graphics.FillRectangle(trackBrush, track);
+                    Color tier = percent < 25 ? Graphite.QuotaLow : (percent < 60 ? Graphite.QuotaMedium : Graphite.QuotaHigh);
+                    using (Brush fill = new SolidBrush(tier)) graphics.FillRectangle(fill, track.X, track.Y, (int)(track.Width * percent / 100.0), track.Height);
+                    top += RowHeight;
                 }
-                if (!ok && (!usable || metrics.Count == 0))
+                foreach (string metric in MetricText(provider, true))
                 {
-                    DrawProviderMark(graphics, Field(provider, "id"), top, detail, primary);
-                    graphics.DrawString("—", detail, secondary, 28, top + 2);
-                    top += 18;
+                    TextRenderer.DrawText(graphics, metric, detail, new Rectangle(dataLeft, top, dataWidth, RowHeight),
+                        Graphite.Primary, CompactText | TextFormatFlags.VerticalCenter);
+                    top += RowHeight;
                 }
             }
         }
     }
 
-    internal static string Countdown(long resetAt)
+    internal static string Countdown(long resetAt, bool compact = false)
     {
         long seconds = resetAt - (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
-        if (seconds <= 0) return "сброс доступен";
+        if (seconds <= 0) return compact ? "сброс" : "сброс доступен";
         if (seconds < 60) return "<1 мин";
         if (seconds < 3600) return (seconds / 60) + " мин";
+        if (compact && seconds >= 86400) return (seconds / 86400) + " д " + ((seconds % 86400) / 3600) + " ч";
         return (seconds / 3600) + " ч " + ((seconds % 3600) / 60) + " мин";
     }
 
@@ -552,28 +563,58 @@ public sealed class LimitsPanel : Control
         object item; Dictionary<string, object> nested;
         return value.TryGetValue(key, out item) && (nested = item as Dictionary<string, object>) != null ? Field(nested, nestedKey) : String.Empty;
     }
-    private static void DrawProviderMark(Graphics graphics, string id, int top, Font font, Brush brush)
+    private static string ProviderName(Dictionary<string, object> provider)
     {
-        string mark = id == "deepseek-account" ? "A" : id == "openai-codex" ? "C" : id == "zai" ? "Z" : "D";
-        Color color = id == "deepseek-account" ? Color.FromArgb(62, 130, 225) : id == "openai-codex" ? Color.FromArgb(35, 130, 90) : id == "zai" ? Color.FromArgb(160, 88, 190) : Color.FromArgb(34, 150, 190);
-        using (Brush fill = new SolidBrush(color)) graphics.FillEllipse(fill, new Rectangle(6, top + 1, 16, 16));
-        using (Pen ring = new Pen(Color.FromArgb(220, Color.White), 1)) graphics.DrawEllipse(ring, new Rectangle(6, top + 1, 15, 15));
-        graphics.DrawString(mark, font, Brushes.White, 9, top + 2);
+        string label = Field(provider, "label");
+        if (label == "OpenAI Codex") return "Codex";
+        return label.Length == 0 ? Field(provider, "id") : label;
     }
-    private static List<string> MetricText(Dictionary<string, object> provider)
+    private static Image LoadProviderLogo(string filename)
+    {
+        using (Stream stream = typeof(LimitsPanel).Assembly.GetManifestResourceStream("Providers." + filename))
+        {
+            if (stream == null) return null;
+            using (Image source = Image.FromStream(stream)) return new Bitmap(source);
+        }
+    }
+    private static void DrawProviderLogo(Graphics graphics, string id, int top)
+    {
+        Image logo = null;
+        if (id == "deepseek" || id == "deepseek-account") logo = DeepSeekLogo;
+        else if (id == "openai-codex") logo = CodexLogo;
+        else if (id == "zai" || id.StartsWith("zai-", StringComparison.Ordinal))
+            logo = Graphite.IsDark ? ZaiDarkLogo : ZaiLightLogo;
+        if (logo != null)
+        {
+            graphics.DrawImage(logo, new Rectangle(6, top + 1, 16, 16));
+            return;
+        }
+        using (Brush marker = new SolidBrush(Graphite.Secondary))
+            graphics.FillEllipse(marker, new Rectangle(11, top + 6, 6, 6));
+    }
+    private static string DisplayAmount(string balance, bool compact)
+    {
+        decimal number;
+        if (!compact || !Decimal.TryParse(balance, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+            CultureInfo.InvariantCulture, out number)) return balance;
+        string format = number != 0 && Math.Abs(number) < 0.01m ? "0.############" : "#,0.##";
+        return number.ToString(format, AmountCulture);
+    }
+    private static List<string> MetricText(Dictionary<string, object> provider, bool compact = false)
     {
         List<string> values = new List<string>();
         foreach (Dictionary<string, object> amount in ValueList(provider, "amounts"))
         {
             string balance = Field(amount, "balance"); string currency = Field(amount, "currency");
-            if (!String.IsNullOrEmpty(balance) && !String.IsNullOrEmpty(currency)) values.Add(balance + " " + currency + (Field(amount, "kind") == "bonus" ? " бонус" : ""));
+            if (balance.Length > 0 && currency.Length > 0)
+                values.Add((Field(amount, "kind") == "bonus" ? "Бонус " : "Баланс ") + DisplayAmount(balance, compact) + " " + currency);
         }
         string unlimited = NestedField(provider, "credits", "unlimited");
         string credits = NestedField(provider, "credits", "balance");
-        if (unlimited == "True") values.Add("Безлимит");
-        else if (!String.IsNullOrEmpty(credits)) values.Add(credits + " кр.");
+        if (unlimited == "True") values.Add("Кредиты без лимита");
+        else if (credits.Length > 0) values.Add("Кредиты " + DisplayAmount(credits, compact));
         string remaining = NestedField(provider, "individualLimit", "remaining");
-        if (!String.IsNullOrEmpty(remaining)) values.Add("Лимит расходов: " + remaining);
+        if (remaining.Length > 0) values.Add((compact ? "Бюджет " : "Остаток лимита расходов ") + DisplayAmount(remaining, compact));
         return values;
     }
     private static bool ProviderAvailable(Dictionary<string, object> provider)
@@ -581,11 +622,25 @@ public sealed class LimitsPanel : Control
         return String.Equals(Field(provider, "state"), "ok", StringComparison.Ordinal)
             && (ValueList(provider, "windows").Count > 0 || MetricText(provider).Count > 0);
     }
+    private bool HasCurrentData(Dictionary<string, object> provider)
+    {
+        return receivedAt != DateTime.MinValue && (DateTime.UtcNow - receivedAt).TotalMinutes <= 10 && ProviderAvailable(provider);
+    }
     protected override void OnMouseMove(MouseEventArgs eventArgs)
     {
-        int line = Math.Max(0, (eventArgs.Y - 4) / 18); int offset = 0;
+        int line = Math.Max(0, (eventArgs.Y - FirstRowTop) / RowHeight); int offset = 0;
         foreach (Dictionary<string, object> provider in providers)
         {
+            if (!HasCurrentData(provider))
+            {
+                if (line == offset)
+                {
+                    hints.SetToolTip(this, ProviderName(provider) + " · Нет данных");
+                    return;
+                }
+                offset++;
+                continue;
+            }
             List<Dictionary<string, object>> windows = ValueList(provider, "windows");
             List<string> metrics = MetricText(provider);
             int count = Math.Max(1, windows.Count + metrics.Count);
@@ -601,7 +656,7 @@ public sealed class LimitsPanel : Control
                 }
                 else if (local - windows.Count < metrics.Count) detail = metrics[local - windows.Count];
                 else detail = "Данные недоступны";
-                hints.SetToolTip(this, Field(provider, "label") + ": " + detail);
+                hints.SetToolTip(this, ProviderName(provider) + " · " + detail);
                 return;
             }
             offset += count;
