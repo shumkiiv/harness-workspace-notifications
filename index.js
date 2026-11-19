@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Tracker, aggregate, reasonText, summary, workspaceFor } from './src/core.mjs'
+import { Tracker, aggregate, reasonText, summary, workspaceFor, uniqueWorkspaceByPath } from './src/core.mjs'
 import { openStore, normalizeSettings } from './src/store.mjs'
 import { launchHelper } from './src/helper.mjs'
 import { buildLimitsPayload } from './src/limits.mjs'
@@ -22,7 +22,17 @@ export function createRuntime(ctx, options = {}) {
     || path.join(os.homedir(), '.dsh', 'workspace-notifications')
   const store = openStore(dataDir, logger)
   let settings = store.settings()
-  const bridge = setupQuotaBridge(ctx, () => settings)
+  let bridge = setupQuotaBridge(ctx, () => settings)
+  let bridgeScope
+  const attachBridge = (scope) => {
+    const previous = bridge
+    previous.close()
+    const scoped = scope && typeof scope.get === 'function' ? scope : ctx
+    const installed = setupQuotaBridge(scoped, () => settings)
+    bridge = installed
+    return () => { installed.close() }
+  }
+  if (typeof ctx.inject === 'function') bridgeScope = ctx.inject(['webServer', 'connection'], (scope) => attachBridge(scope))
   let outcomes = store.outcomes()
   const tracker = new Tracker({
     turnBoundaryOf(session) {
@@ -43,7 +53,11 @@ export function createRuntime(ctx, options = {}) {
 
   function registry() {
     const values = ctx.get?.('workspaceRegistry')?.list?.()
-    return Array.isArray(values) ? values : []
+    if (!Array.isArray(values)) return []
+    return values.map((item) => {
+      const path = String(item?.path || item?.dir || '').replace(/\\/g, '/')
+      return { id: String(item?.id || ''), title: String(item?.title || item?.name || path.split('/').filter(Boolean).at(-1) || item?.id || ''), path, sessionIds: Array.isArray(item?.sessionIds) ? [...item.sessionIds] : [], registered: true }
+    }).filter((item) => item.id)
   }
 
   function sessionMap() {
@@ -81,7 +95,7 @@ export function createRuntime(ctx, options = {}) {
     try {
       rememberAgents()
       const listed = registry()
-      const areas = new Map(listed.map((item) => [item.id, { ...item, sessionIds: [...(item.sessionIds || [])] }]))
+      const areas = new Map(listed.map((item) => [item.id, { id: item.id, title: item.title, path: item.path, sessionIds: [...item.sessionIds], registered: item.registered === true }]))
       const states = new Map(tracker.sessions)
       for (const state of tracker.sessions.values()) {
         const workspace = resolvedWorkspace(state.session, listed)
@@ -95,7 +109,8 @@ export function createRuntime(ctx, options = {}) {
         if (live?.outcome && `${outcome.sessionId}#${live.outcome.turn}` === outcome.id) continue
         if (states.has(id)) continue
         states.set(id, { session: { id }, open: new Map(), ended: new Set(), disposed: false, outcome })
-        const area = areas.get(outcome.workspaceId) || {
+        const knownOutcomeWorkspace = uniqueWorkspaceByPath(outcome.path, listed)
+        const area = areas.get(outcome.workspaceId) || areas.get(knownOutcomeWorkspace?.id) || {
           id: outcome.workspaceId,
           title: outcome.workspace || 'Без рабочей области',
           path: outcome.path || '',
@@ -221,6 +236,8 @@ export function createRuntime(ctx, options = {}) {
       clearInterval(timer)
       clearInterval(limitsTimer)
       bridge.close()
+      if (typeof bridgeScope === 'function') bridgeScope()
+      else if (bridgeScope && typeof bridgeScope.dispose === 'function') await bridgeScope.dispose()
       await helper.close()
     },
   }

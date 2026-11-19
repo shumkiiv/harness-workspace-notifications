@@ -21,11 +21,15 @@ export function setupQuotaBridge(ctx, getSettings, now = () => Date.now()) {
   let origin; try { origin = web.getOrigin() } catch { return { read: async () => null, close() {} } }
   let originUrl; try { originUrl = new URL(origin) } catch { return { read: async () => null, close() {} } }
   if (originUrl.hostname !== '127.0.0.1' && originUrl.hostname !== '[::1]' && originUrl.hostname !== 'localhost') return { read: async () => null, close() {} }
-  const dispose = web.register({ kind: 'exact', path: PATH, handler: async (req, res) => {
+  const registeredDispose = web.register({ kind: 'exact', path: PATH, handler: async (req, res) => {
     let rejection; try { rejection = connection.requestRejection(req) } catch { return reply(res, 403, { error: 'forbidden' }) }
     if (rejection !== undefined || !local(req) || req.headers.host !== originUrl.host) return reply(res, rejection || 403, { error: 'forbidden' })
     if (req.method === 'GET') return reply(res, 200, { enabled: Boolean(getSettings().ShowLimits) })
-    if (req.method !== 'POST' || !getSettings().ShowLimits || req.headers.origin !== origin || !String(req.headers['content-type'] || '').startsWith('application/json')) return reply(res, 403, { error: 'forbidden' })
+    // The official Desktop proxy strips Origin before forwarding an authenticated local request.
+    const requestOrigin = req.headers.origin
+    const sameOrigin = requestOrigin === undefined || requestOrigin === origin
+    if (req.method !== 'POST' || !getSettings().ShowLimits || !sameOrigin || req.headers['sec-fetch-site'] === 'cross-site'
+      || !/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return reply(res, 403, { error: 'forbidden' })
     let body = ''; let bytes = 0; let finished = false
     req.on('data', (chunk) => { if (finished) return; bytes += Buffer.byteLength(chunk); if (bytes > MAX_BODY) { finished = true; return reply(res, 413, { error: 'too-large' }) } body += chunk })
     req.on('aborted', () => { finished = true })
@@ -39,6 +43,8 @@ export function setupQuotaBridge(ctx, getSettings, now = () => Date.now()) {
       reply(res, 204, {})
     })
   } })
+  let disposed = false
+  const dispose = () => { if (disposed) return; disposed = true; registeredDispose() }
   return {
     async read() { if (closed || !getSettings().ShowLimits) { cache = null; return null } return cache && now() - cache.at <= TTL ? cache.windows.map((w) => ({ ...w })) : null },
     close() { closed = true; cache = null; dispose() }, path: PATH,

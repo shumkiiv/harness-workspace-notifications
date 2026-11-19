@@ -37,3 +37,15 @@ test('quota bridge stores only bounded projected windows then expires and dispos
   f.advance(600001); assert.equal(await f.bridge.read(), null)
   f.bridge.close(); assert.equal(f.removed(), true)
 })
+
+test('authenticated Desktop proxy can forward JSON without an Origin header', async () => {
+  const f = fixture()
+  const headers = { host: '127.0.0.1:8811', 'content-type': 'application/json' }
+  const method = 'POST'
+  const body = JSON.stringify({ provider: 'openai-codex', windows: [{ percent: 35, windowSeconds: 18000 }] })
+  assert.equal((await request(f.route().handler, { method, headers, body, reject: 401 })).status, 401)
+  assert.equal((await request(f.route().handler, { method, headers: { ...headers, 'sec-fetch-site': 'cross-site' }, body })).status, 403)
+  assert.equal((await request(f.route().handler, { method, headers, body })).status, 204)
+  assert.deepEqual(await f.bridge.read(), [{ percent: 35, windowSeconds: 18000, resetAt: null }])
+  f.bridge.close()
+})

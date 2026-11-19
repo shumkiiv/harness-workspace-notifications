@@ -76,6 +76,7 @@ public sealed class WidgetRow
     public string TimeText;
     public int RunningCount;
     public int CompletedCount;
+    public bool Registered;
 }
 
 public static class Geometry
@@ -108,10 +109,19 @@ public static class SettingsApplier
 
 public sealed class SettingsForm : Form
 {
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+    [DllImport("user32.dll", EntryPoint = "SendMessageW", ExactSpelling = true)]
+    private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    private const int RowInset = 10;
+    private const int RowHeight = 20;
     private readonly Settings value;
     private readonly Action<Settings> changed;
     private readonly Dictionary<string, CheckBox> checks = new Dictionary<string, CheckBox>();
+    private readonly Dictionary<Control, int> pages = new Dictionary<Control, int>();
+    private Panel contentPanel;
     private bool syncing;
+    private int page;
 
     public Button SaveButton { get; private set; }
 
@@ -121,25 +131,49 @@ public sealed class SettingsForm : Form
         changed = onChanged;
         Text = "Настройки";
         FormBorderStyle = FormBorderStyle.None;
+        SuspendLayout();
+        ClientSize = new Size(398, 329);
         BackColor = Graphite.Base;
         ForeColor = Graphite.Primary;
-        int top = 10;
-        AddCaption("Настройки", ref top);
-        AddCaption("Окна", ref top);
+        KeyPreview = true;
+        KeyDown += delegate(object sender, KeyEventArgs args) { if (args.KeyCode == Keys.Escape) Close(); };
+        Panel titleBar = new Panel();
+        titleBar.BackColor = Graphite.Card; titleBar.SetBounds(0, 0, 398, 32);
+        titleBar.MouseDown += DragCaption;
+        Label title = new Label(); title.Text = "☷  Настройки"; title.ForeColor = Graphite.Primary; title.AutoSize = true; title.Location = new Point(10, 8); title.MouseDown += DragCaption;
+        titleBar.Controls.Add(title); Controls.Add(titleBar);
+        Panel tabs = new Panel(); tabs.BackColor = Graphite.Base; tabs.SetBounds(8, 36, 374, 28); tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        string[] tabNames = new string[] { "Общие", "Карточки", "Состояния" };
+        for (int tabIndex = 0; tabIndex < tabNames.Length; tabIndex++)
+        {
+            Button tab = new Button(); int selected = tabIndex;
+            tab.Text = tabNames[tabIndex]; tab.AccessibleName = tabNames[tabIndex]; tab.SetBounds(tabIndex * 124, 1, 120, 25);
+            tab.FlatStyle = FlatStyle.Flat; tab.FlatAppearance.BorderColor = Graphite.Border; tab.BackColor = tabIndex == 0 ? Graphite.Card : Graphite.Base; tab.ForeColor = Graphite.Primary;
+            tab.Click += delegate { ShowPage(selected); };
+            tabs.Controls.Add(tab);
+        }
+        Controls.Add(tabs);
+        tabs.SizeChanged += delegate
+        {
+            int tabWidth = Math.Max(1, tabs.ClientSize.Width / Math.Max(1, tabs.Controls.Count));
+            for (int index = 0; index < tabs.Controls.Count; index++) tabs.Controls[index].SetBounds(index * tabWidth, 1, tabWidth, 25);
+        };
+        int top = 72;
+        page = 0;
         Add("show-widget", "Показывать виджет", value.ShowWidget, ref top);
         Add("show-notices", "Показывать уведомления", value.ShowNotifications, ref top);
         Add("subagent-notices", "Уведомления субагентов", value.SubagentNotices, ref top);
-        AddCaption("Поля", ref top);
+        Add("compact-widget", "Компактный вид", value.CompactWidget, ref top);
+        Add("theme-dark", "Тёмная тема", value.ThemeDark, ref top);
+        Add("show-limits", "Лимиты ИИ в окне „Задачи“", value.ShowLimits, ref top);
+        page = 1; top = 72;
         Add("field-workspace", "Рабочая область", value.FieldWorkspace, ref top);
         Add("field-task", "Задача", value.FieldTask, ref top);
         Add("field-status", "Результат", value.FieldStatus, ref top);
         Add("field-time", "Время", value.FieldTime, ref top);
         Add("field-path", "Путь", value.FieldPath, ref top);
         Add("widget-counts", "Счётчики", value.WidgetCounts, ref top);
-        Add("compact-widget", "Компактный вид", value.CompactWidget, ref top);
-        Add("theme-dark", "Тёмная тема", value.ThemeDark, ref top);
-        Add("show-limits", "Лимиты ИИ", value.ShowLimits, ref top);
-        AddCaption("Состояния", ref top);
+        page = 2; top = 72;
         Add("status-running", "Выполняется", value.StatusRunning, ref top);
         Add("status-completed", "Завершено", value.StatusCompleted, ref top);
         Add("status-error", "Ошибка", value.StatusError, ref top);
@@ -152,8 +186,9 @@ public sealed class SettingsForm : Form
         Add("status-disposed", "Сессия закрыта", value.StatusDisposed, ref top);
         SaveButton = new Button();
         SaveButton.Text = "Готово";
-        SaveButton.Top = top;
-        SaveButton.Left = 10;
+        SaveButton.Top = 290;
+        SaveButton.Left = 292;
+        SaveButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
         SaveButton.FlatStyle = FlatStyle.Flat;
         SaveButton.BackColor = Graphite.Card;
         SaveButton.ForeColor = Graphite.Primary;
@@ -167,12 +202,31 @@ public sealed class SettingsForm : Form
         close.BackColor = Graphite.Card;
         close.ForeColor = Graphite.Primary;
         close.Size = new Size(28, 24);
-        close.Left = 282;
+        close.Left = 362;
         close.Top = 6;
+        close.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         close.Click += delegate { Close(); };
-        Controls.Add(close);
-        Width = 320;
-        Height = top + 70;
+        titleBar.Controls.Add(close);
+        titleBar.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        MinimumSize = new Size(360, 280);
+        AutoScroll = false;
+        contentPanel = new Panel();
+        contentPanel.SetBounds(8, 64, 382, 218);
+        contentPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        contentPanel.AutoScroll = true;
+        contentPanel.BackColor = Graphite.Card;
+        foreach (Control control in new List<Control>(pages.Keys))
+        {
+            control.Top = Math.Max(8, control.Top - 64);
+            Controls.Remove(control);
+            contentPanel.Controls.Add(control);
+        }
+        Controls.Add(contentPanel);
+        contentPanel.SizeChanged += delegate { FitRows(); };
+        FitRows();
+        ShowPage(0);
+        ResumeLayout(true);
+        ApplyOwnPalette(this);
     }
 
     public CheckBox Check(string key)
@@ -186,6 +240,27 @@ public sealed class SettingsForm : Form
         checks["theme-dark"].Checked = value.ThemeDark;
         checks["show-limits"].Checked = value.ShowLimits;
         syncing = false;
+        ApplyOwnPalette(this);
+    }
+
+    private static void ApplyOwnPalette(Control control)
+    {
+        Panel panel = control as Panel;
+        if (panel != null) panel.BackColor = Graphite.Card;
+        Label label = control as Label;
+        if (label != null) label.ForeColor = Graphite.Primary;
+        Button button = control as Button;
+        if (button != null) { button.BackColor = Graphite.Card; button.ForeColor = Graphite.Primary; button.FlatAppearance.BorderColor = Graphite.Border; }
+        CheckBox check = control as CheckBox;
+        if (check != null) { check.BackColor = Graphite.Card; check.ForeColor = Graphite.Primary; }
+        foreach (Control child in control.Controls) ApplyOwnPalette(child);
+    }
+
+    private void DragCaption(object sender, MouseEventArgs args)
+    {
+        if (args.Button != MouseButtons.Left) return;
+        ReleaseCapture();
+        SendMessage(Handle, 0x00A1, new IntPtr(2), IntPtr.Zero);
     }
 
     private void Add(string key, string text, bool selected, ref int top)
@@ -193,9 +268,9 @@ public sealed class SettingsForm : Form
         CheckBox check = new CheckBox();
         check.Text = text;
         check.Checked = selected;
-        check.Top = top;
-        check.Left = 10;
-        check.Width = 290;
+        check.SetBounds(RowInset, top, 1, RowHeight);
+        check.TextAlign = ContentAlignment.MiddleLeft;
+        check.CheckAlign = ContentAlignment.MiddleRight;
         check.FlatStyle = FlatStyle.Flat;
         check.ForeColor = Graphite.Primary;
         check.BackColor = Graphite.Base;
@@ -204,8 +279,9 @@ public sealed class SettingsForm : Form
             Save();
         };
         checks.Add(key, check);
+        pages[check] = page;
         Controls.Add(check);
-        top += 22;
+        top += RowHeight;
     }
 
     private void AddCaption(string text, ref int top)
@@ -219,7 +295,21 @@ public sealed class SettingsForm : Form
         caption.Width = 280;
         caption.Height = 20;
         Controls.Add(caption);
+        pages[caption] = page;
         top += 22;
+    }
+
+    private void FitRows()
+    {
+        // Reserve the vertical scrollbar gutter before layout can introduce a horizontal scrollbar.
+        int width = Math.Max(1, contentPanel.Width - RowInset * 2 - SystemInformation.VerticalScrollBarWidth);
+        foreach (CheckBox row in checks.Values) row.Width = width;
+    }
+
+    private void ShowPage(int selected)
+    {
+        contentPanel.AutoScrollPosition = Point.Empty;
+        foreach (KeyValuePair<Control, int> item in pages) item.Key.Visible = item.Value == selected;
     }
 
     private void Save()
@@ -298,7 +388,10 @@ public sealed class TaskGlyph : Control
     }
     protected override void OnPaint(PaintEventArgs eventArgs)
     {
-        Graphite.DrawTaskIcon(eventArgs.Graphics, ClientRectangle, Graphite.Primary);
+        Icon icon = TaskIcon.Small;
+        int size = Math.Min(Math.Min(Width, Height), icon.Width);
+        if (size == 0) return;
+        eventArgs.Graphics.DrawIcon(icon, new Rectangle((Width - size) / 2, (Height - size) / 2, size, size));
     }
 }
 
@@ -410,6 +503,8 @@ public sealed class DshNotifyGui : Form
     private const int WidgetWidth = 248;
     private const int CompactHeight = 115;
     private const int ExpandedHeight = 320;
+    private const int ResizeGripHeight = 6;
+    private const int DefaultQuotaHeight = 120;
     private const int NoticeStackWidth = 352;
     private const int NoticeStackHeightLimit = 420;
     private const int NonClientLeftButtonDown = 0x00A1;
@@ -421,20 +516,22 @@ public sealed class DshNotifyGui : Form
     [DllImport("user32.dll", EntryPoint = "SendMessageW", ExactSpelling = true)]
     private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
 
-    [DllImport("user32.dll", ExactSpelling = true)]
-    private static extern bool DestroyIcon(IntPtr handle);
-
     private readonly JavaScriptSerializer json = new JavaScriptSerializer();
     private readonly StreamWriter output;
     private readonly Action<string> outputCallback;
     private readonly NotifyIcon tray = new NotifyIcon();
-    private Icon trayIcon;
     private readonly NotificationWindow stack = new NotificationWindow();
     private readonly ItemScrollList cards = new ItemScrollList();
     private readonly ItemScrollList rows = new ItemScrollList();
     private readonly CompactWidgetControl compact;
     private readonly LimitsPanel limits = new LimitsPanel();
     private readonly Panel limitsHost = new Panel();
+    private readonly Panel resizeGrip = new Panel();
+    private int compactUserHeight;
+    private int expandedUserHeight;
+    private int resizeStartHeight;
+    private int resizeStartY;
+    private bool resizeStartedCompact;
     private readonly Button compactToggle = new Button();
     private readonly Dictionary<string, WidgetRow> widgetRows = new Dictionary<string, WidgetRow>();
     private readonly Dictionary<string, Dictionary<string, object>> notices =
@@ -477,6 +574,7 @@ public sealed class DshNotifyGui : Form
         }
         Settings = new Settings();
         Text = (demo ? "[ДЕМО] " : "") + "Задачи";
+        Icon = TaskIcon.Window;
         FormBorderStyle = FormBorderStyle.None;
         BackColor = Graphite.Base;
         ClientSize = new Size(WidgetWidth, CompactHeight);
@@ -525,9 +623,46 @@ public sealed class DshNotifyGui : Form
         rows.BackColor = Graphite.Base;
         rows.AccessibleName = "Список рабочих областей";
         Controls.Add(rows);
+        limitsHost.Dock = DockStyle.Top;
+        limitsHost.AutoScroll = true;
+        limitsHost.Visible = false;
+        limitsHost.BackColor = Graphite.Base;
+        limits.Location = new Point(0, 0);
+        limits.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        limitsHost.Controls.Add(limits);
         compact = new CompactWidgetControl();
         compact.Dock = DockStyle.Fill;
         Controls.Add(compact);
+        Controls.Add(limitsHost);
+        resizeGrip.Dock = DockStyle.Bottom;
+        resizeGrip.Height = ResizeGripHeight;
+        resizeGrip.Cursor = Cursors.SizeNS;
+        resizeGrip.AccessibleName = "Изменить высоту окна";
+        resizeGrip.BackColor = Graphite.Base;
+        resizeGrip.Paint += delegate(object sender, PaintEventArgs args)
+        {
+            int center = resizeGrip.Width / 2;
+            using (Pen pen = new Pen(Graphite.Secondary))
+                args.Graphics.DrawLine(pen, center - 12, 2, center + 12, 2);
+        };
+        resizeGrip.MouseDown += delegate(object sender, MouseEventArgs args)
+        {
+            if (args.Button != MouseButtons.Left) return;
+            resizeStartHeight = Height;
+            resizeStartY = Control.MousePosition.Y;
+            resizeStartedCompact = Settings.CompactWidget;
+            resizeGrip.Capture = true;
+        };
+        resizeGrip.MouseMove += delegate(object sender, MouseEventArgs args)
+        {
+            if (!resizeGrip.Capture || args.Button != MouseButtons.Left || resizeStartedCompact != Settings.CompactWidget) return;
+            SetUserWidgetHeight(resizeStartHeight + Control.MousePosition.Y - resizeStartY);
+        };
+        resizeGrip.MouseUp += delegate(object sender, MouseEventArgs args)
+        {
+            if (args.Button == MouseButtons.Left) resizeGrip.Capture = false;
+        };
+        Controls.Add(resizeGrip);
         compactToggle.Text = "›";
         compactToggle.Size = new Size(25, 24);
         StyleHeaderButton(compactToggle);
@@ -560,14 +695,6 @@ public sealed class DshNotifyGui : Form
         foreach (Button button in headerButtons) StyleHeaderButton(button);
         stack.Padding = new Padding(1);
         stack.Controls.Add(cards);
-        limitsHost.Dock = DockStyle.Top;
-        limitsHost.AutoScroll = true;
-        limitsHost.Visible = false;
-        limitsHost.BackColor = Graphite.Base;
-        limits.Location = new Point(0, 0);
-        limits.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-        limitsHost.Controls.Add(limits);
-        stack.Controls.Add(limitsHost);
         stack.Controls.Add(MakeNoticeHeader(demo));
         stack.ClientSize = new Size(NoticeStackWidth, 34);
         stack.Text = (demo ? "[ДЕМО] " : "") + "Уведомления";
@@ -581,7 +708,7 @@ public sealed class DshNotifyGui : Form
             Send("notices.moved", "x", x, "y", y);
         };
         stack.FormClosing += StackFormClosing;
-        SetTrayIcon();
+        tray.Icon = TaskIcon.Small;
         ContextMenuStrip menu = new ContextMenuStrip();
         menu.Items.Add("Показать виджет", null, delegate
         {
@@ -597,31 +724,6 @@ public sealed class DshNotifyGui : Form
         });
         tray.ContextMenuStrip = menu;
         tray.Visible = true;
-    }
-
-    private Icon CreateTrayIcon()
-    {
-        try
-        {
-            using (Bitmap bitmap = new Bitmap(32, 32))
-            using (Graphics graphics = Graphics.FromImage(bitmap))
-            {
-                graphics.Clear(Color.Transparent);
-                Graphite.DrawTaskIcon(graphics, new Rectangle(2, 2, 28, 28), Graphite.Primary);
-                IntPtr handle = bitmap.GetHicon();
-                try { return (Icon)Icon.FromHandle(handle).Clone(); }
-                finally { DestroyIcon(handle); }
-            }
-        }
-        catch { return SystemIcons.Information; }
-    }
-
-    private void SetTrayIcon()
-    {
-        Icon previous = trayIcon;
-        trayIcon = CreateTrayIcon();
-        tray.Icon = trayIcon;
-        if (previous != null && previous != SystemIcons.Information) previous.Dispose();
     }
 
     protected override bool ShowWithoutActivation
@@ -678,7 +780,6 @@ public sealed class DshNotifyGui : Form
         {
             tray.Visible = false;
             tray.Dispose();
-            if (trayIcon != null && trayIcon != SystemIcons.Information) trayIcon.Dispose();
             if (!stack.IsDisposed)
             {
                 stack.Dispose();
@@ -709,10 +810,6 @@ public sealed class DshNotifyGui : Form
         if (!Settings.ShowNotifications)
         {
             stack.Hide();
-        }
-        else if (Settings.ShowLimits && !noticesManuallyHidden)
-        {
-            ShowNotices();
         }
         if (DemoSettingsAfterApply)
         {
@@ -779,8 +876,6 @@ public sealed class DshNotifyGui : Form
         {
             StoreLimits(message);
             RenderWidget();
-            RenderNotices();
-            if (Settings.ShowNotifications && Settings.ShowLimits && !noticesManuallyHidden) ShowNotices();
         }
         else if (type == "notice.show")
         {
@@ -831,6 +926,7 @@ public sealed class DshNotifyGui : Form
             row.TimeText = TextOf(source, "timeText");
             row.RunningCount = NumberOf(source, "runningCount", "active");
             row.CompletedCount = NumberOf(source, "completedCount", "completed");
+            row.Registered = String.Equals(TextOf(source, "registered"), "true", StringComparison.OrdinalIgnoreCase);
             if (!String.IsNullOrEmpty(row.Id))
             {
                 widgetRows[row.Id] = row;
@@ -862,6 +958,8 @@ public sealed class DshNotifyGui : Form
         compact.BackColor = Graphite.Base;
         limits.BackColor = Graphite.Base;
         limitsHost.BackColor = Graphite.Base;
+        resizeGrip.BackColor = Graphite.Base;
+        resizeGrip.Invalidate();
         stack.BackColor = Graphite.Border;
         headerPanel.BackColor = Graphite.Card;
         headerTitle.ForeColor = Graphite.Primary;
@@ -870,7 +968,6 @@ public sealed class DshNotifyGui : Form
         noticeHeaderTitle.ForeColor = Graphite.Secondary;
         StyleHeaderButton(noticeHeaderClose);
         foreach (Button button in headerButtons) StyleHeaderButton(button);
-        SetTrayIcon();
         foreach (Form form in settingsForms)
         {
             form.BackColor = Graphite.Base;
@@ -936,7 +1033,7 @@ public sealed class DshNotifyGui : Form
         List<WidgetRow> visibleRows = new List<WidgetRow>();
         foreach (WidgetRow row in widgetRows.Values)
         {
-            if (IsVisible(row.Status))
+            if (IsVisible(row.Status) || (row.Registered && Settings.FieldWorkspace && String.Equals(row.Status, "idle", StringComparison.OrdinalIgnoreCase)))
             {
                 visibleRows.Add(row);
             }
@@ -944,15 +1041,16 @@ public sealed class DshNotifyGui : Form
         compact.Visible = Settings.CompactWidget;
         rows.Visible = !Settings.CompactWidget;
         limits.UpdateLimits(limitProviders, limitsReceivedAt);
+        UpdateLimitsHost();
         compactToggle.Text = Settings.CompactWidget ? "›" : "‹";
         compactToggle.AccessibleName = Settings.CompactWidget ? "Развернуть список" : "Свернуть список";
         if (Settings.CompactWidget)
         {
             compact.UpdateRows(visibleRows, Settings);
-            ResizeWidget(CompactHeight);
+            ResizeWidget();
             return;
         }
-        ResizeWidget(ExpandedHeight);
+        ResizeWidget();
         int firstItem = rows.FirstIndex;
         rows.SuspendLayout();
         try
@@ -1000,8 +1098,7 @@ public sealed class DshNotifyGui : Form
         {
             cards.ResumeLayout(true);
         }
-        UpdateLimitsHost();
-        if (cards.Controls.Count == 0 && !Settings.ShowLimits)
+        if (cards.Controls.Count == 0)
         {
             stack.Hide();
         }
@@ -1067,18 +1164,9 @@ public sealed class DshNotifyGui : Form
         {
             string caption = TextOf(notice, "statusText");
             if (String.IsNullOrEmpty(caption)) caption = StatusLabel(status);
-            int width = Math.Min(161, TextRenderer.MeasureText(caption, CardDetailFont).Width + 22);
-            Label chip = new Label
-            {
-                Text = "• " + caption,
-                TextAlign = ContentAlignment.MiddleCenter,
-                AutoEllipsis = true,
-                Font = CardDetailFont,
-                ForeColor = Graphite.Accent(status),
-                BackColor = Graphite.ChipFill(status),
-                Bounds = new Rectangle(titleRight - width, 8, width, 20),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
-            };
+            int width = Math.Min(161, TextRenderer.MeasureText(caption, CardDetailFont).Width + 28);
+            Panel chip = MakeStatusIndicator(status, caption, new Rectangle(titleRight - width, 8, width, 20), true);
+            chip.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             card.Controls.Add(chip);
             titleRight = chip.Left - 8;
         }
@@ -1089,14 +1177,7 @@ public sealed class DshNotifyGui : Form
         }
         int top = 34;
         string task = TextOf(notice, "task");
-        if (Settings.FieldTask && !String.IsNullOrWhiteSpace(task) && task != "Задача не указана")
-        {
-            Size measured = TextRenderer.MeasureText(task, Font, new Size(card.Width - 24, Int32.MaxValue),
-                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
-            int height = Math.Min(Font.Height * 2 + 3, Math.Max(Font.Height + 1, measured.Height));
-            AddNoticeLabel(card, task, Font, Graphite.Primary, top, card.Width - 24, height);
-            top += height + 5;
-        }
+        if (Settings.FieldTask) top = AddTaskText(card, task, top, card.Width - 24);
 
         List<string> metadata = new List<string>();
         if (Settings.FieldTime)
@@ -1107,12 +1188,55 @@ public sealed class DshNotifyGui : Form
         if (Settings.FieldPath) AddLine(metadata, TextOf(notice, "path"));
         if (metadata.Count > 0)
         {
+            top = AddMetadataRule(card, top, card.Width - 24);
             AddNoticeLabel(card, String.Join("  ·  ", metadata.ToArray()), CardDetailFont, Graphite.Secondary,
                 top, card.Width - 24, 16);
             top += 17;
         }
         card.Height = top + 8;
         return card;
+    }
+
+    private static Panel MakeStatusIndicator(string status, string text, Rectangle bounds, bool badge)
+    {
+        Panel indicator = new Panel
+        {
+            Bounds = bounds,
+            BackColor = badge ? Graphite.ChipFill(status) : Graphite.Card
+        };
+        var icon = new StatusGlyph(status) { Bounds = new Rectangle(2, (bounds.Height - 16) / 2, 16, 16), BackColor = indicator.BackColor };
+        var caption = new Label
+        {
+            Text = text, UseMnemonic = false, AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft, Font = CardDetailFont,
+            ForeColor = Graphite.Accent(status), BackColor = indicator.BackColor,
+            Bounds = new Rectangle(21, 0, Math.Max(1, bounds.Width - 23), bounds.Height),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        };
+        indicator.Controls.Add(icon);
+        indicator.Controls.Add(caption);
+        return indicator;
+    }
+
+    private int AddTaskText(Panel card, string task, int top, int width)
+    {
+        if (String.IsNullOrWhiteSpace(task) || task == "Задача не указана") return top;
+        Size measured = TextRenderer.MeasureText(task, Font, new Size(width, Int32.MaxValue),
+            TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+        int height = Math.Min(Font.Height * 2 + 3, Math.Max(Font.Height + 1, measured.Height));
+        AddNoticeLabel(card, task, Font, Graphite.Primary, top, width, height);
+        return top + height + 5;
+    }
+
+    private static int AddMetadataRule(Panel card, int top, int width)
+    {
+        card.Controls.Add(new Panel
+        {
+            BackColor = Graphite.Border,
+            Bounds = new Rectangle(12, top, width, 1),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        });
+        return top + 6;
     }
 
     private static Button NoticeCloseButton(string accessibleName)
@@ -1165,21 +1289,30 @@ public sealed class DshNotifyGui : Form
         int contentWidth = Math.Max(1, width - 24);
         string title = String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace;
         int top = 8;
+        bool headingOnly = row.Registered && String.Equals(row.Status, "idle", StringComparison.OrdinalIgnoreCase) && !Settings.StatusIdle;
         if (Settings.FieldWorkspace && !String.IsNullOrWhiteSpace(title))
         {
             AddNoticeLabel(card, title, CardTitleFont, Graphite.Primary, top, contentWidth, 19);
             top += 21;
         }
-        if (Settings.FieldStatus)
+        if (Settings.FieldStatus && !headingOnly)
         {
             string status = String.IsNullOrEmpty(row.StatusText) ? StatusLabel(row.Status) : row.StatusText;
-            AddNoticeLabel(card, "• " + status, CardDetailFont, Graphite.Accent(row.Status), top, contentWidth, 17);
-            top += 20;
+            Panel indicator = MakeStatusIndicator(row.Status, status, new Rectangle(10, top, contentWidth + 2, 18), false);
+            indicator.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            card.Controls.Add(indicator);
+            top += 21;
         }
-        foreach (string detail in WidgetDetails(row))
+        if (!headingOnly)
         {
-            AddNoticeLabel(card, detail, CardDetailFont, Graphite.Secondary, top, contentWidth, 17);
-            top += 18;
+            if (Settings.FieldTask) top = AddTaskText(card, row.TaskSummary, top, contentWidth);
+            List<string> metadata = WidgetMetadata(row);
+            if (metadata.Count > 0 && top > 8) top = AddMetadataRule(card, top, contentWidth);
+            foreach (string detail in metadata)
+            {
+                AddNoticeLabel(card, detail, CardDetailFont, Graphite.Secondary, top, contentWidth, 17);
+                top += 18;
+            }
         }
         card.Height = top + 6;
         return card;
@@ -1195,13 +1328,9 @@ public sealed class DshNotifyGui : Form
         return "Неизвестно";
     }
 
-    private List<string> WidgetDetails(WidgetRow row)
+    private List<string> WidgetMetadata(WidgetRow row)
     {
         List<string> lines = new List<string>();
-        if (Settings.FieldTask && row.TaskSummary != "Задача не указана")
-        {
-            AddLine(lines, row.TaskSummary);
-        }
         if (Settings.FieldTime)
         {
             AddLine(lines, row.TimeText);
@@ -1290,12 +1419,29 @@ public sealed class DshNotifyGui : Form
         UserChanged(Settings);
     }
 
-    private void ResizeWidget(int height)
+    private int UserWidgetHeight
+    {
+        get { return Settings.CompactWidget ? compactUserHeight : expandedUserHeight; }
+    }
+
+    internal void SetUserWidgetHeight(int height)
+    {
+        Rectangle area = Screen.FromPoint(Location).WorkingArea;
+        int requested = Math.Max(1, Math.Min(height, area.Bottom - Math.Max(Top, area.Top)));
+        if (Settings.CompactWidget) compactUserHeight = requested;
+        else expandedUserHeight = requested;
+        UpdateLimitsHost();
+        ResizeWidget();
+    }
+
+    private void ResizeWidget()
     {
         Point previous = Location;
         Rectangle area = Screen.FromPoint(previous).WorkingArea;
-        Rectangle next = Geometry.ClampToVisible(new Rectangle(previous,
-            new Size(WidgetWidth, Math.Min(height, HeightLimit(area, ExpandedHeight)))), area);
+        int automatic = ResizeGripHeight + (Settings.CompactWidget ? CompactHeight + limitsHost.Height : ExpandedHeight);
+        int preferred = UserWidgetHeight;
+        int height = preferred > 0 ? Math.Max(automatic, preferred) : Math.Min(automatic, HeightLimit(area, ExpandedHeight + ResizeGripHeight));
+        Rectangle next = Geometry.ClampToVisible(new Rectangle(previous, new Size(WidgetWidth, height)), area);
         if (Bounds == next)
         {
             return;
@@ -1317,7 +1463,7 @@ public sealed class DshNotifyGui : Form
     private void ShowNotices()
     {
         noticesManuallyHidden = false;
-        if (cards.Controls.Count == 0 && !Settings.ShowLimits)
+        if (cards.Controls.Count == 0)
         {
             return;
         }
@@ -1347,19 +1493,19 @@ public sealed class DshNotifyGui : Form
         }
         Point anchor = new Point(Settings.NoticeX, Settings.NoticeY);
         Rectangle area = Screen.FromPoint(anchor).WorkingArea;
-        if (Settings.ShowLimits) desiredHeight += Math.Min(180, limits.DesiredHeight);
         int height = Math.Min(desiredHeight, HeightLimit(area, NoticeStackHeightLimit));
         stack.Bounds = Geometry.ClampToVisible(new Rectangle(anchor, new Size(NoticeStackWidth, height)), area);
-        int cardMinimum = cards.Controls.Count > 0 ? 120 : 0;
-        int limitMaximum = Math.Max(0, stack.ClientSize.Height - 32 - cardMinimum);
-        limitsHost.Height = Settings.ShowLimits ? Math.Min(Math.Min(180, limits.DesiredHeight), limitMaximum) : 0;
-        limits.Width = Math.Max(1, limitsHost.ClientSize.Width);
         cards.PerformLayout();
     }
 
     private void UpdateLimitsHost()
     {
         limitsHost.Visible = Settings.ShowLimits;
+        int preferred = Math.Min(UserWidgetHeight, Screen.FromPoint(Location).WorkingArea.Height);
+        int minimumTaskArea = Settings.CompactWidget ? CompactHeight - headerPanel.Height : 160;
+        int available = Math.Max(DefaultQuotaHeight, preferred - headerPanel.Height - ResizeGripHeight - minimumTaskArea);
+        limitsHost.Height = Settings.ShowLimits ? Math.Min(available, limits.DesiredHeight) : 0;
+        limits.Width = Math.Max(1, ClientSize.Width - limitsHost.Padding.Horizontal);
     }
 
     private void SaveWidgetPosition()
@@ -1490,18 +1636,6 @@ public sealed class DshNotifyGui : Form
         bool settingsRoundTrip = serializer.Deserialize<Settings>(serializer.Serialize(settings)).ShowWidget;
         bool newSettings = serializer.Deserialize<Settings>(serializer.Serialize(settings)).ThemeDark
             && !serializer.Deserialize<Settings>(serializer.Serialize(settings)).ShowLimits;
-        Bitmap iconBitmap = new Bitmap(24, 24);
-        using (Graphics iconGraphics = Graphics.FromImage(iconBitmap))
-        {
-            iconGraphics.Clear(Color.Transparent);
-            Graphite.DrawTaskIcon(iconGraphics, new Rectangle(1, 1, 22, 22), Color.Black);
-        }
-        bool iconDrawn = false;
-        for (int y = 0; y < iconBitmap.Height; y++) for (int x = 0; x < iconBitmap.Width; x++)
-        {
-            if (iconBitmap.GetPixel(x, y).A != 0) iconDrawn = true;
-        }
-        iconBitmap.Dispose();
         bool countdown = LimitsPanel.Countdown(0) == "сброс доступен"
             && LimitsPanel.Countdown((long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds + 59) == "<1 мин";
         List<string> output = new List<string>();
@@ -1509,6 +1643,15 @@ public sealed class DshNotifyGui : Form
         {
             output.Add(line);
         });
+        bool iconDrawn;
+        using (Bitmap iconBitmap = new Bitmap(gui.taskGlyph.Width, gui.taskGlyph.Height))
+        {
+            gui.taskGlyph.DrawToBitmap(iconBitmap, gui.taskGlyph.ClientRectangle);
+            Color center = iconBitmap.GetPixel(iconBitmap.Width / 2, iconBitmap.Height / 2);
+            iconDrawn = center.B > center.R + 30;
+        }
+        bool taskIconConsistent = gui.Icon == TaskIcon.Window && gui.tray.Icon == TaskIcon.Small
+            && HasMatchingShellIcon(gui.Icon);
         bool taskTitle = gui.Text == "Задачи";
         gui.SimulateMoveEnd(-400, -400);
         bool moveEmitted = output.Count == 1 && output[0].Contains("widget.moved");
@@ -1603,7 +1746,8 @@ public sealed class DshNotifyGui : Form
             + "{\"id\":\"running\",\"title\":\"Alpha 2\",\"status\":\"running\"}]}");
         bool rowsReplaced = gui.rows.Controls.Count == 1 && HasText(gui.rows, "Alpha 2");
         gui.Dispose();
-        bool passed = checkbox && position && clamp && settingsRoundTrip && newSettings && iconDrawn && countdown && taskTitle && moveEmitted && moveStored;
+        bool passed = checkbox && position && clamp && settingsRoundTrip && newSettings && iconDrawn
+            && taskIconConsistent && countdown && taskTitle && moveEmitted && moveStored;
         passed = passed && noEcho && allRowsShown && allNoticesShown;
         passed = passed && matrix && fieldsHidden && rowsReplaced && compactToggle && noticePresentation
             && completedRowFirst && completedNoticeFirst && noticeHeightAndWidth && fixedWidgetWidth && wholeCardScroll;
@@ -1614,6 +1758,7 @@ public sealed class DshNotifyGui : Form
             + ",\"settingsRoundTrip\":" + JsonBool(settingsRoundTrip)
             + ",\"newSettings\":" + JsonBool(newSettings)
             + ",\"iconDrawn\":" + JsonBool(iconDrawn)
+            + ",\"taskIconConsistent\":" + JsonBool(taskIconConsistent)
             + ",\"countdown\":" + JsonBool(countdown)
             + ",\"taskTitle\":" + JsonBool(taskTitle)
             + ",\"moveEmitted\":" + JsonBool(moveEmitted)
@@ -1632,6 +1777,26 @@ public sealed class DshNotifyGui : Form
             + ",\"rowsReplaced\":" + JsonBool(rowsReplaced)
             + ",\"compactToggle\":" + JsonBool(compactToggle) + "}}");
         return passed ? 0 : 1;
+    }
+
+    private static bool HasMatchingShellIcon(Icon expected)
+    {
+        using (Icon shellIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath))
+        {
+            if (shellIcon == null || shellIcon.Size != expected.Size) return false;
+            using (Bitmap shellBitmap = shellIcon.ToBitmap())
+            using (Bitmap expectedBitmap = expected.ToBitmap())
+            {
+                for (int y = 0; y < expectedBitmap.Height; y++)
+                {
+                    for (int x = 0; x < expectedBitmap.Width; x++)
+                    {
+                        if (shellBitmap.GetPixel(x, y) != expectedBitmap.GetPixel(x, y)) return false;
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     private static string JsonBool(bool value)

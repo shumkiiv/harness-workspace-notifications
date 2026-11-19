@@ -1,3 +1,5 @@
+import { win32, posix } from 'node:path'
+
 const STATUS_TEXT = {
   running: 'Выполняется',
   completed: 'Завершено',
@@ -18,6 +20,22 @@ export function reasonText(reason) {
 export function basename(value) {
   const parts = String(value || '').replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean)
   return parts.at(-1) || 'Без рабочей области'
+}
+
+export function canonicalPath(value) {
+  if (typeof value !== 'string' || value === '') return null
+  const windows = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('//')
+  if (!windows && !value.startsWith('/')) return null
+  const result = windows ? win32.normalize(value) : posix.normalize(value)
+  if (!result || result === '.') return null
+  return windows ? result.replace(/[\\/]+$/, '').toLowerCase() : result.replace(/\/+$/, '')
+}
+
+export function uniqueWorkspaceByPath(value, listed) {
+  const key = canonicalPath(value)
+  if (!key) return undefined
+  const matches = (listed || []).filter((item) => canonicalPath(item.path) === key)
+  return matches.length === 1 ? matches[0] : undefined
 }
 
 export function summary(value) {
@@ -105,6 +123,8 @@ export function workspaceFor(session, registry, sessions) {
     current = knownSessions.get(current.header?.parentSession)
   }
   const cwd = session?.header?.cwd || ''
+  const exact = uniqueWorkspaceByPath(cwd, workspaces)
+  if (exact) return exact
   return { id: `path:${cwd || session?.id || 'unknown'}`, title: basename(cwd), path: cwd, sessionIds: [] }
 }
 
@@ -131,6 +151,7 @@ export function aggregate(workspaces, states, agents = []) {
       workspace: workspace.title || basename(workspace.path),
       title: workspace.title || basename(workspace.path),
       path: workspace.path || '',
+      registered: workspace.registered === true,
       status,
       statusText: reasonText(status),
       taskSummary: latest?.task || '',

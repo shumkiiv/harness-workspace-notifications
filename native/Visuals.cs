@@ -1,7 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
+
+internal static class TaskIcon
+{
+    internal static readonly Icon Small = Load(SystemInformation.SmallIconSize);
+    internal static readonly Icon Window = Load(SystemInformation.IconSize);
+
+    private static Icon Load(Size size)
+    {
+        using (Stream stream = typeof(TaskIcon).Assembly.GetManifestResourceStream("HarnessTasks.ico"))
+        {
+            return new Icon(stream, size);
+        }
+    }
+}
 
 public static class Graphite
 {
@@ -34,24 +50,6 @@ public static class Graphite
         QuotaLow = dark ? Color.FromArgb(170, 108, 102) : Color.FromArgb(181, 111, 101);
         QuotaMedium = dark ? Color.FromArgb(176, 151, 97) : Color.FromArgb(165, 136, 76);
         QuotaHigh = dark ? Color.FromArgb(105, 159, 132) : Color.FromArgb(80, 137, 111);
-    }
-
-    public static void DrawTaskIcon(Graphics graphics, Rectangle rectangle, Color color)
-    {
-        int unit = Math.Max(1, Math.Min(rectangle.Width, rectangle.Height) / 8);
-        Rectangle page = new Rectangle(rectangle.Left + unit * 2, rectangle.Top + unit, unit * 5, unit * 6);
-        using (Pen pen = new Pen(color, Math.Max(1F, unit)))
-        {
-            graphics.DrawRectangle(pen, page);
-            graphics.DrawLine(pen, page.Left + unit, page.Top - unit, page.Right - unit, page.Top - unit);
-            for (int index = 0; index < 2; index++)
-            {
-                int y = page.Top + unit * (2 + index * 2);
-                graphics.DrawLine(pen, page.Left + unit, y, page.Left + unit * 2, y + unit);
-                graphics.DrawLine(pen, page.Left + unit * 2, y + unit, page.Left + unit * 3, y - unit);
-                graphics.DrawLine(pen, page.Left + unit * 4, y, page.Right - unit, y);
-            }
-        }
     }
 
     public static Color Accent(string status)
@@ -258,8 +256,53 @@ internal sealed class ItemScrollList : Panel
     }
 }
 
+internal sealed class StatusGlyph : Control
+{
+    private readonly string status;
+
+    public StatusGlyph(string value)
+    {
+        status = value ?? String.Empty;
+        TabStop = false;
+    }
+
+    protected override void OnPaint(PaintEventArgs args)
+    {
+        var graphics = args.Graphics;
+        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        Color color = Graphite.Accent(status);
+        using (Pen pen = new Pen(color, 1.6F))
+        using (Brush brush = new SolidBrush(color))
+        {
+            pen.StartCap = pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+            if (status == "running")
+                graphics.FillPolygon(brush, new[] { new Point(4, 2), new Point(13, 8), new Point(4, 13) });
+            else if (status == "completed")
+                graphics.DrawLines(pen, new[] { new Point(3, 8), new Point(6, 11), new Point(13, 4) });
+            else if (status == "error" || status == "blocked" || status == "max-tokens")
+            {
+                graphics.DrawEllipse(pen, 2, 2, 11, 11);
+                graphics.DrawLine(pen, 7.5F, 5, 7.5F, 8);
+                graphics.FillEllipse(brush, 6.75F, 9.5F, 1.5F, 1.5F);
+            }
+            else if (status == "aborted" || status == "interrupted")
+            {
+                graphics.DrawLine(pen, 4, 4, 11, 11);
+                graphics.DrawLine(pen, 11, 4, 4, 11);
+            }
+            else if (status == "disposed")
+                graphics.DrawLine(pen, 4, 8, 11, 8);
+            else
+                graphics.DrawEllipse(pen, 4, 4, 7, 7);
+        }
+    }
+}
+
 public sealed class CompactWidgetControl : Control
 {
+    private const int DistributionHeight = 5;
+    private const int DistributionBottomInset = 4;
+    private const int NamesHeight = 16;
     private IList<WidgetRow> rows = new List<WidgetRow>();
     private Settings settings;
     public CompactWidgetControl()
@@ -299,12 +342,24 @@ public sealed class CompactWidgetControl : Control
             DrawMetrics(graphics);
             DrawDistribution(graphics);
         }
+        DrawRegisteredNames(graphics);
     }
 
     private void DrawEmpty(Graphics graphics)
     {
         DrawText(graphics, "Нет активности", new Rectangle(12, 28, Width - 24, 24), 10F, Graphite.Primary);
         DrawText(graphics, "Новые задачи появятся здесь", new Rectangle(12, 56, Width - 24, 20), 8F, Graphite.Secondary);
+    }
+
+    private void DrawRegisteredNames(Graphics graphics)
+    {
+        if (settings == null || !settings.FieldWorkspace) return;
+        List<string> names = rows.Where(row => row.Registered && !String.IsNullOrEmpty(row.Workspace)).Select(row => row.Workspace).Take(2).ToList();
+        if (names.Count == 0) return;
+        int extra = rows.Count(row => row.Registered) - names.Count;
+        string text = String.Join(" · ", names.ToArray()) + (extra > 0 ? " +" + extra : "");
+        int namesTop = settings.WidgetCounts ? DistributionTop - NamesHeight - 2 : Height - 22;
+        DrawText(graphics, text, new Rectangle(12, namesTop, Width - 24, NamesHeight), 8F, Graphite.Secondary);
     }
 
     private void DrawMetrics(Graphics graphics)
@@ -353,6 +408,11 @@ public sealed class CompactWidgetControl : Control
         }
     }
 
+    private int DistributionTop
+    {
+        get { return Height - DistributionBottomInset - DistributionHeight; }
+    }
+
     private void DrawDistribution(Graphics graphics)
     {
         int total = rows.Count;
@@ -362,7 +422,7 @@ public sealed class CompactWidgetControl : Control
         }
         int running = Count("running");
         int completed = Count("completed");
-        int top = 68;
+        int top = DistributionTop;
         int width = Width - 24;
         int runningWidth = width * running / total;
         int completedWidth = width * completed / total;
@@ -370,9 +430,9 @@ public sealed class CompactWidgetControl : Control
         using (Brush completedBrush = new SolidBrush(Color.FromArgb(127, 194, 154)))
         using (Brush neutralBrush = new SolidBrush(Graphite.Secondary))
         {
-            graphics.FillRectangle(runningBrush, 12, top, runningWidth, 5);
-            graphics.FillRectangle(completedBrush, 12 + runningWidth, top, completedWidth, 5);
-            graphics.FillRectangle(neutralBrush, 12 + runningWidth + completedWidth, top, width - runningWidth - completedWidth, 5);
+            graphics.FillRectangle(runningBrush, 12, top, runningWidth, DistributionHeight);
+            graphics.FillRectangle(completedBrush, 12 + runningWidth, top, completedWidth, DistributionHeight);
+            graphics.FillRectangle(neutralBrush, 12 + runningWidth + completedWidth, top, width - runningWidth - completedWidth, DistributionHeight);
         }
     }
 
