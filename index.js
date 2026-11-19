@@ -60,6 +60,8 @@ export function createRuntime(ctx, options = {}) {
   })
   let timer
   let limitsTimer
+  let accountBalanceCache = { at: 0, value: null, pending: null }
+  let limitsGeneration = 0
   let closed = false
   for (const outcome of outcomes) tracker.emitted.add(outcome.id)
 
@@ -131,7 +133,7 @@ export function createRuntime(ctx, options = {}) {
         area.sessionIds.push(id)
         areas.set(area.id, area)
       }
-      const rows = aggregate([...areas.values()], states, currentAgents())
+      const rows = aggregate([...areas.values()], states, currentAgents(), settings.InlineTaskTime ? Date.now() : null)
       displayedSessionIds.clear()
       for (const row of rows) if (row.sessionId) displayedSessionIds.add(row.sessionId)
       for (const id of noticeSessions.values()) displayedSessionIds.add(id)
@@ -143,26 +145,60 @@ export function createRuntime(ctx, options = {}) {
   }
 
   async function refreshLimits() {
+    const generation = limitsGeneration
+    const snapshot = settings
     if (closed) return
     const llm = ctx.get?.('llm')
     if (!llm || typeof llm.listProviders !== 'function') return
     const readers = {}
+    const account = ctx.get?.('deepseekAccount')
+    const hidden = Array.isArray(settings.HiddenLimitProviders) ? settings.HiddenLimitProviders : []
+    const enabled = settings.ShowLimits === true
+    const current = () => !closed && generation === limitsGeneration && settings === snapshot
+    let providers
+    try { providers = await llm.listProviders() } catch { return }
+    if (!current()) return
+    const catalog = Array.isArray(providers) ? providers.filter((item) => item && typeof item.id === 'string' && item.id && typeof (item.name || item.label || item.id) === 'string') : []
     if (typeof options.readProviderQuota === 'function') {
-      try {
-        const providers = await llm.listProviders()
-        if (Array.isArray(providers)) for (const provider of providers) if (provider?.id) readers[provider.id] = options.readProviderQuota
-      } catch { return }
+      for (const provider of catalog) readers[provider.id] = options.readProviderQuota
+    } else if (enabled && !hidden.includes('openai-codex')) readers['openai-codex'] = bridge.read
+    if (enabled && account && typeof account.getBalance === 'function' && !hidden.includes('deepseek-account')) {
+      readers['deepseek-account'] = async () => {
+        if (!current() || settings.HiddenLimitProviders.includes('deepseek-account')) return null
+        const clock = Date.now()
+        if (accountBalanceCache.pending) return accountBalanceCache.pending
+        if (clock - accountBalanceCache.at <= 10 * 60 * 1000) return accountBalanceCache.value
+        const version = ctx.get?.('clientModules')?.graph?.()?.release?.version
+        if (typeof version !== 'string' || !version) return null
+        accountBalanceCache.pending = Promise.resolve(account.getBalance({ version, locale: 'ru-RU', timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60 }))
+          .then((value) => {
+            const validAmount = (item, kind) => item && (item.currency === 'USD' || item.currency === 'CNY')
+              && typeof item.balance === 'string' && /^-?\d{1,18}(?:\.\d{1,12})?$/.test(item.balance)
+              ? { currency: item.currency, balance: item.balance, kind } : null
+            const amounts = value && value.status === 'ready' ? [
+              ...(Array.isArray(value.value) ? value.value.map((item) => validAmount(item, 'wallet')) : []),
+              ...(Array.isArray(value.bonusWallets) ? value.bonusWallets.map((item) => validAmount(item, 'bonus')) : []),
+            ].filter(Boolean) : []
+            accountBalanceCache.value = amounts.length ? { amounts } : null
+            accountBalanceCache.at = Date.now()
+            return accountBalanceCache.value
+          }).catch(() => null).finally(() => { accountBalanceCache.pending = null })
+        return accountBalanceCache.pending
+      }
     }
-    else readers['openai-codex'] = bridge.read
-    const payload = await buildLimitsPayload({ listProviders: () => llm.listProviders(), readers })
-    helper.send({ t: 'widget.limits', providers: payload.providers, receivedAt: payload.receivedAt })
+    if (account && typeof account.getBalance === 'function' && !catalog.some((item) => item.id === 'deepseek-account')) catalog.push({ id: 'deepseek-account', name: 'DeepSeek Account' })
+    const payload = enabled ? await buildLimitsPayload({ listProviders: () => catalog, readers, hiddenProviders: hidden }) : { providers: [], receivedAt: Date.now() }
+    if (!current()) return
+    helper.send({ t: 'widget.limits', providers: payload.providers, availableProviders: catalog.map((item) => ({ id: String(item.id), label: String(item.name || item.label || item.id) })), receivedAt: payload.receivedAt })
   }
 
   function receive(message) {
     if (message?.t === 'settings.changed') {
+      limitsGeneration += 1
       settings = normalizeSettings(message.settings)
       store.saveSettings(settings)
       render()
+      if (settings.ShowLimits) void refreshLimits()
       return
     }
     if (message?.t === 'widget.moved' && Number.isInteger(message.x) && Number.isInteger(message.y)) {
@@ -245,9 +281,9 @@ export function createRuntime(ctx, options = {}) {
   ctx.on?.('session/disposed', onDisposed)
   ctx.on?.('agent/status', render)
   timer = setInterval(render, 1500)
-  limitsTimer = setInterval(refreshLimits, 60000)
+  limitsTimer = setInterval(() => { void refreshLimits() }, 60000)
   render()
-  refreshLimits()
+  void refreshLimits()
 
   return {
     render,

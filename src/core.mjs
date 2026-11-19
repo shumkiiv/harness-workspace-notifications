@@ -135,7 +135,7 @@ function stateIsRunning(id, state, status) {
   return status === 'running'
 }
 
-export function aggregate(workspaces, states, agents = []) {
+export function aggregate(workspaces, states, agents = [], now = null) {
   const statusBySession = new Map((agents || []).map((agent) => [agent.session?.id || agent.session, agent.status]))
   return (workspaces || []).map((workspace) => {
     const memberIds = Array.isArray(workspace.sessionIds) ? workspace.sessionIds : []
@@ -151,6 +151,10 @@ export function aggregate(workspaces, states, agents = []) {
     const disposed = members.length > 0 && members.every(({ state }) => state.disposed) && !latest
     const status = running.length ? 'running' : (disposed ? 'disposed' : (latest?.reason || 'idle'))
     const completedCount = outcomes.filter((outcome) => outcome.reason === 'completed').length
+    const represented = latest?.sessionId || latestRunning?.id || ''
+    const activeStart = latestRunning?.state.open.size ? Math.max(...[...latestRunning.state.open.values()].map((turn) => turn.time || 0)) : 0
+    const activeDuration = !latest && latestRunning && represented === latestRunning.id && Number.isFinite(activeStart) && activeStart > 0 && Number.isFinite(now) && now >= activeStart
+      ? `${Math.max(0, Math.round((now - activeStart) / 1000))} с` : ''
     return {
       id: workspace.id,
       workspace: workspace.title || basename(workspace.path),
@@ -160,8 +164,8 @@ export function aggregate(workspaces, states, agents = []) {
       status,
       statusText: reasonText(status),
       taskSummary: latest?.task || latestRunning?.state.task || '',
-      sessionId: latest?.sessionId || latestRunning?.id || '',
-      timeText: latest?.duration || '',
+      sessionId: represented,
+      timeText: latest?.duration || activeDuration,
       runningCount: running.length,
       completedCount,
     }

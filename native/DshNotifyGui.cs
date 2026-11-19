@@ -32,8 +32,11 @@ public class Settings
     public bool StatusUnknown { get; set; }
     public bool StatusDisposed { get; set; }
     public bool CompactWidget { get; set; }
+    public bool CompactWorkspaceList { get; set; }
+    public bool InlineTaskTime { get; set; }
     public bool ThemeDark { get; set; }
     public bool ShowLimits { get; set; }
+    public List<string> HiddenLimitProviders { get; set; }
     public int WidgetX { get; set; }
     public int WidgetY { get; set; }
     public int NoticeX { get; set; }
@@ -60,8 +63,11 @@ public class Settings
         StatusUnknown = true;
         StatusDisposed = true;
         CompactWidget = true;
+        CompactWorkspaceList = false;
+        InlineTaskTime = false;
         ThemeDark = true;
         ShowLimits = false;
+        HiddenLimitProviders = new List<string>();
     }
 }
 
@@ -127,7 +133,7 @@ public sealed class SettingsForm : Form
 
     public Button SaveButton { get; private set; }
 
-    public SettingsForm(Settings current, Action<Settings> onChanged)
+    public SettingsForm(Settings current, Action<Settings> onChanged, List<Dictionary<string, object>> providers)
     {
         value = current;
         changed = onChanged;
@@ -145,11 +151,11 @@ public sealed class SettingsForm : Form
         Label title = new Label(); title.Text = "☷  Настройки"; title.ForeColor = Graphite.Primary; title.AutoSize = true; title.Location = new Point(10, 8); title.MouseDown += DragCaption;
         titleBar.Controls.Add(title); Controls.Add(titleBar);
         Panel tabs = new Panel(); tabs.BackColor = Graphite.Base; tabs.SetBounds(8, 36, 374, 28); tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-        string[] tabNames = new string[] { "Общие", "Карточки", "Состояния" };
+        string[] tabNames = new string[] { "Общие", "Карточки", "Состояния", "Лимиты" };
         for (int tabIndex = 0; tabIndex < tabNames.Length; tabIndex++)
         {
             Button tab = new Button(); int selected = tabIndex;
-            tab.Text = tabNames[tabIndex]; tab.AccessibleName = tabNames[tabIndex]; tab.SetBounds(tabIndex * 124, 1, 120, 25);
+            tab.Text = tabNames[tabIndex]; tab.AccessibleName = tabNames[tabIndex]; tab.SetBounds(tabIndex * 92, 1, 88, 25);
             tab.FlatStyle = FlatStyle.Flat; tab.FlatAppearance.BorderColor = Graphite.Border; tab.BackColor = tabIndex == 0 ? Graphite.Card : Graphite.Base; tab.ForeColor = Graphite.Primary;
             tab.Click += delegate { ShowPage(selected); };
             tabs.Controls.Add(tab);
@@ -166,6 +172,7 @@ public sealed class SettingsForm : Form
         Add("show-notices", "Показывать уведомления", value.ShowNotifications, ref top);
         Add("subagent-notices", "Уведомления субагентов", value.SubagentNotices, ref top);
         Add("compact-widget", "Компактный вид", value.CompactWidget, ref top);
+        Add("compact-workspace-list", "Короткий список областей: имя и состояние", value.CompactWorkspaceList, ref top);
         Add("theme-dark", "Тёмная тема", value.ThemeDark, ref top);
         Add("show-limits", "Лимиты ИИ в окне „Задачи“", value.ShowLimits, ref top);
         page = 1; top = 72;
@@ -175,6 +182,7 @@ public sealed class SettingsForm : Form
         Add("field-time", "Время", value.FieldTime, ref top);
         Add("field-path", "Путь", value.FieldPath, ref top);
         Add("widget-counts", "Счётчики", value.WidgetCounts, ref top);
+        Add("inline-task-time", "Время рядом с задачей", value.InlineTaskTime, ref top);
         page = 2; top = 72;
         Add("status-running", "Выполняется", value.StatusRunning, ref top);
         Add("status-completed", "Завершено", value.StatusCompleted, ref top);
@@ -186,6 +194,15 @@ public sealed class SettingsForm : Form
         Add("status-idle", "Без задач", value.StatusIdle, ref top);
         Add("status-unknown", "Состояние неизвестно", value.StatusUnknown, ref top);
         Add("status-disposed", "Сессия закрыта", value.StatusDisposed, ref top);
+        page = 3; top = 72;
+        AddCaption("Показывать лимиты", ref top);
+        foreach (Dictionary<string, object> provider in providers ?? new List<Dictionary<string, object>>())
+        {
+            string id = Convert.ToString(provider.ContainsKey("id") ? provider["id"] : "");
+            if (String.IsNullOrEmpty(id) || checks.ContainsKey("limit-" + id)) continue;
+            string label = Convert.ToString(provider.ContainsKey("label") ? provider["label"] : id);
+            Add("limit-" + id, label, !value.HiddenLimitProviders.Contains(id), ref top);
+        }
         SaveButton = new Button();
         SaveButton.Text = "Готово";
         SaveButton.Top = 290;
@@ -236,11 +253,37 @@ public sealed class SettingsForm : Form
         return checks[key];
     }
 
+    public void UpdateLimitProviders(List<Dictionary<string, object>> providers)
+    {
+        int previousPage = page;
+        Point scroll = contentPanel.AutoScrollPosition;
+        page = 3;
+        HashSet<string> wanted = new HashSet<string>((providers ?? new List<Dictionary<string, object>>()).Select(provider => Convert.ToString(provider.ContainsKey("id") ? provider["id"] : "")).Where(id => !String.IsNullOrEmpty(id)));
+        foreach (string key in checks.Keys.Where(key => key.StartsWith("limit-", StringComparison.Ordinal) && !wanted.Contains(key.Substring(6))).ToList())
+        {
+            Control control = checks[key]; contentPanel.Controls.Remove(control); pages.Remove(control); checks.Remove(key); control.Dispose();
+        }
+        int top = pages.Where(item => item.Value == 3).Select(item => item.Key.Bottom + 2).DefaultIfEmpty(8).Max();
+        foreach (Dictionary<string, object> provider in providers ?? new List<Dictionary<string, object>>())
+        {
+            string id = Convert.ToString(provider.ContainsKey("id") ? provider["id"] : "");
+            if (String.IsNullOrEmpty(id)) continue;
+            string label = Convert.ToString(provider.ContainsKey("label") ? provider["label"] : id);
+            CheckBox existing; if (checks.TryGetValue("limit-" + id, out existing)) { existing.Text = label; continue; }
+            Add("limit-" + id, label, !value.HiddenLimitProviders.Contains(id), ref top);
+        }
+        page = previousPage;
+        FitRows();
+        ShowPage(previousPage);
+        contentPanel.AutoScrollPosition = new Point(-scroll.X, -scroll.Y);
+    }
+
     public void RefreshTheme()
     {
         syncing = true;
         checks["theme-dark"].Checked = value.ThemeDark;
         checks["show-limits"].Checked = value.ShowLimits;
+        checks["compact-widget"].Checked = value.CompactWidget;
         syncing = false;
         ApplyOwnPalette(this);
     }
@@ -282,7 +325,7 @@ public sealed class SettingsForm : Form
         };
         checks.Add(key, check);
         pages[check] = page;
-        Controls.Add(check);
+        if (contentPanel == null) Controls.Add(check); else contentPanel.Controls.Add(check);
         top += RowHeight;
     }
 
@@ -296,7 +339,7 @@ public sealed class SettingsForm : Form
         caption.Top = top;
         caption.Width = 280;
         caption.Height = 20;
-        Controls.Add(caption);
+        if (contentPanel == null) Controls.Add(caption); else contentPanel.Controls.Add(caption);
         pages[caption] = page;
         top += 22;
     }
@@ -310,6 +353,7 @@ public sealed class SettingsForm : Form
 
     private void ShowPage(int selected)
     {
+        page = selected;
         contentPanel.AutoScrollPosition = Point.Empty;
         foreach (KeyValuePair<Control, int> item in pages) item.Key.Visible = item.Value == selected;
     }
@@ -317,6 +361,7 @@ public sealed class SettingsForm : Form
     private void Save()
     {
         if (syncing) return;
+        bool wasCompactWorkspaceList = value.CompactWorkspaceList;
         value.ShowWidget = checks["show-widget"].Checked;
         value.ShowNotifications = checks["show-notices"].Checked;
         value.SubagentNotices = checks["subagent-notices"].Checked;
@@ -327,8 +372,18 @@ public sealed class SettingsForm : Form
         value.FieldPath = checks["field-path"].Checked;
         value.WidgetCounts = checks["widget-counts"].Checked;
         value.CompactWidget = checks["compact-widget"].Checked;
+        value.CompactWorkspaceList = checks["compact-workspace-list"].Checked;
+        if (!wasCompactWorkspaceList && value.CompactWorkspaceList)
+        {
+            value.CompactWidget = false;
+            syncing = true; checks["compact-widget"].Checked = false; syncing = false;
+        }
+        value.InlineTaskTime = checks["inline-task-time"].Checked;
         value.ThemeDark = checks["theme-dark"].Checked;
         value.ShowLimits = checks["show-limits"].Checked;
+        value.HiddenLimitProviders = value.HiddenLimitProviders.Where(id => !checks.ContainsKey("limit-" + id))
+            .Concat(checks.Where(item => item.Key.StartsWith("limit-", StringComparison.Ordinal) && !item.Value.Checked)
+            .Select(item => item.Key.Substring("limit-".Length))).Distinct().Take(32).ToList();
         value.StatusRunning = checks["status-running"].Checked;
         value.StatusCompleted = checks["status-completed"].Checked;
         value.StatusError = checks["status-error"].Checked;
@@ -401,6 +456,7 @@ public sealed class LimitsPanel : Control
 {
     private List<Dictionary<string, object>> providers = new List<Dictionary<string, object>>();
     private DateTime receivedAt = DateTime.MinValue;
+    private readonly ToolTip hints = new ToolTip();
 
     public LimitsPanel()
     {
@@ -412,11 +468,12 @@ public sealed class LimitsPanel : Control
 
     public void UpdateLimits(List<Dictionary<string, object>> value, DateTime received)
     {
-        providers = value ?? new List<Dictionary<string, object>>();
+        providers = (value ?? new List<Dictionary<string, object>>()).OrderByDescending(ProviderAvailable).ToList();
         receivedAt = received;
         int lines = 0;
-        foreach (Dictionary<string, object> provider in providers) lines += Math.Max(1, ValueList(provider, "windows").Count);
-        Height = Math.Max(28, 4 + lines * 32);
+        foreach (Dictionary<string, object> provider in providers) lines += Math.Max(1, ValueList(provider, "windows").Count + MetricText(provider).Count);
+        Height = Math.Max(22, 4 + lines * 18);
+        AccessibleDescription = String.Join(", ", providers.Select(provider => Field(provider, "label")).ToArray());
         Invalidate();
     }
 
@@ -439,28 +496,39 @@ public sealed class LimitsPanel : Control
             int top = 4;
             foreach (Dictionary<string, object> provider in providers)
             {
-                string label = Field(provider, "label");
-                string providerLabel = String.IsNullOrEmpty(label) ? Field(provider, "id") : label;
                 List<Dictionary<string, object>> windows = ValueList(provider, "windows");
+                List<string> metrics = MetricText(provider);
                 bool ok = !stale && String.Equals(Field(provider, "state"), "ok", StringComparison.Ordinal) && windows.Count > 0;
-                if (!ok)
-                {
-                    graphics.DrawString(providerLabel + " · Данные недоступны", detail, secondary, 8, top);
-                    top += 32;
-                }
-                else
+                bool usable = !stale && String.Equals(Field(provider, "state"), "ok", StringComparison.Ordinal);
+                if (ok)
                 {
                     foreach (Dictionary<string, object> window in windows)
                     {
-                        Rectangle track = new Rectangle(8, top + 16, Math.Max(30, Width - 16), 4);
+                        DrawProviderMark(graphics, Field(provider, "id"), top, detail, primary);
+                        Rectangle track = new Rectangle(28, top + 8, Math.Max(34, Math.Min(70, Width / 3)), 4);
                         using (Brush trackBrush = new SolidBrush(Graphite.Border)) graphics.FillRectangle(trackBrush, track);
                         double percent = ToDouble(window["percent"]);
                         Color tier = percent < 25 ? Graphite.QuotaLow : (percent < 60 ? Graphite.QuotaMedium : Graphite.QuotaHigh);
                         using (Brush fill = new SolidBrush(tier)) graphics.FillRectangle(fill, track.X, track.Y, Math.Max(0, (int)(track.Width * percent / 100.0)), track.Height);
                         string reset = HasNumber(window, "resetAt") ? Countdown(ToLong(window, "resetAt")) : "срок неизвестен";
-                        graphics.DrawString(providerLabel + " · " + Field(window, "label") + " · " + Math.Round(percent) + "% · " + reset, detail, secondary, 8, top);
-                        top += 32;
+                        graphics.DrawString(Field(window, "label") + " " + Math.Round(percent) + "% · " + reset, detail, secondary, track.Right + 5, top + 1);
+                        top += 18;
                     }
+                }
+                if (usable)
+                {
+                    foreach (string metric in metrics)
+                    {
+                        DrawProviderMark(graphics, Field(provider, "id"), top, detail, primary);
+                        graphics.DrawString(metric, detail, secondary, 28, top + 2);
+                        top += 18;
+                    }
+                }
+                if (!ok && (!usable || metrics.Count == 0))
+                {
+                    DrawProviderMark(graphics, Field(provider, "id"), top, detail, primary);
+                    graphics.DrawString("—", detail, secondary, 28, top + 2);
+                    top += 18;
                 }
             }
         }
@@ -478,6 +546,67 @@ public sealed class LimitsPanel : Control
     private static string Field(Dictionary<string, object> value, string key)
     {
         object item; return value.TryGetValue(key, out item) ? Convert.ToString(item) : String.Empty;
+    }
+    private static string NestedField(Dictionary<string, object> value, string key, string nestedKey)
+    {
+        object item; Dictionary<string, object> nested;
+        return value.TryGetValue(key, out item) && (nested = item as Dictionary<string, object>) != null ? Field(nested, nestedKey) : String.Empty;
+    }
+    private static void DrawProviderMark(Graphics graphics, string id, int top, Font font, Brush brush)
+    {
+        string mark = id == "deepseek-account" ? "A" : id == "openai-codex" ? "C" : id == "zai" ? "Z" : "D";
+        Color color = id == "deepseek-account" ? Color.FromArgb(62, 130, 225) : id == "openai-codex" ? Color.FromArgb(35, 130, 90) : id == "zai" ? Color.FromArgb(160, 88, 190) : Color.FromArgb(34, 150, 190);
+        using (Brush fill = new SolidBrush(color)) graphics.FillEllipse(fill, new Rectangle(6, top + 1, 16, 16));
+        using (Pen ring = new Pen(Color.FromArgb(220, Color.White), 1)) graphics.DrawEllipse(ring, new Rectangle(6, top + 1, 15, 15));
+        graphics.DrawString(mark, font, Brushes.White, 9, top + 2);
+    }
+    private static List<string> MetricText(Dictionary<string, object> provider)
+    {
+        List<string> values = new List<string>();
+        foreach (Dictionary<string, object> amount in ValueList(provider, "amounts"))
+        {
+            string balance = Field(amount, "balance"); string currency = Field(amount, "currency");
+            if (!String.IsNullOrEmpty(balance) && !String.IsNullOrEmpty(currency)) values.Add(balance + " " + currency + (Field(amount, "kind") == "bonus" ? " бонус" : ""));
+        }
+        string unlimited = NestedField(provider, "credits", "unlimited");
+        string credits = NestedField(provider, "credits", "balance");
+        if (unlimited == "True") values.Add("Безлимит");
+        else if (!String.IsNullOrEmpty(credits)) values.Add(credits + " кр.");
+        string remaining = NestedField(provider, "individualLimit", "remaining");
+        if (!String.IsNullOrEmpty(remaining)) values.Add("Лимит расходов: " + remaining);
+        return values;
+    }
+    private static bool ProviderAvailable(Dictionary<string, object> provider)
+    {
+        return String.Equals(Field(provider, "state"), "ok", StringComparison.Ordinal)
+            && (ValueList(provider, "windows").Count > 0 || MetricText(provider).Count > 0);
+    }
+    protected override void OnMouseMove(MouseEventArgs eventArgs)
+    {
+        int line = Math.Max(0, (eventArgs.Y - 4) / 18); int offset = 0;
+        foreach (Dictionary<string, object> provider in providers)
+        {
+            List<Dictionary<string, object>> windows = ValueList(provider, "windows");
+            List<string> metrics = MetricText(provider);
+            int count = Math.Max(1, windows.Count + metrics.Count);
+            if (line < offset + count)
+            {
+                int local = line - offset;
+                string detail;
+                if (local < windows.Count)
+                {
+                    Dictionary<string, object> window = windows[local];
+                    string reset = HasNumber(window, "resetAt") ? Countdown(ToLong(window, "resetAt")) : "срок неизвестен";
+                    detail = Field(window, "label") + " " + Math.Round(ToDouble(window["percent"])) + "% · " + reset;
+                }
+                else if (local - windows.Count < metrics.Count) detail = metrics[local - windows.Count];
+                else detail = "Данные недоступны";
+                hints.SetToolTip(this, Field(provider, "label") + ": " + detail);
+                return;
+            }
+            offset += count;
+        }
+        hints.SetToolTip(this, String.Empty);
     }
     private static long ToLong(Dictionary<string, object> value, string key)
     {
@@ -540,7 +669,7 @@ public sealed class DshNotifyGui : Form
     private readonly Dictionary<string, Dictionary<string, object>> notices =
         new Dictionary<string, Dictionary<string, object>>();
     private readonly List<string> noticeOrder = new List<string>();
-    private readonly List<Form> settingsForms = new List<Form>();
+    private readonly List<SettingsForm> settingsForms = new List<SettingsForm>();
     private readonly List<Button> headerButtons = new List<Button>();
     private Panel headerPanel;
     private Label headerTitle;
@@ -558,6 +687,7 @@ public sealed class DshNotifyGui : Form
     private bool lastShowNotifications = true;
     private readonly bool demoMode;
     private List<Dictionary<string, object>> limitProviders = new List<Dictionary<string, object>>();
+    private List<Dictionary<string, object>> availableLimitProviders = new List<Dictionary<string, object>>();
     private DateTime limitsReceivedAt = DateTime.MinValue;
 
     public Settings Settings { get; private set; }
@@ -592,8 +722,7 @@ public sealed class DshNotifyGui : Form
         header.MouseDown += DragWidget;
         FlowLayoutPanel headerActions = new FlowLayoutPanel();
         headerActions.Dock = DockStyle.Right;
-        headerActions.Width = 112;
-        headerActions.Padding = new Padding(2, 3, 2, 3);
+        headerActions.Padding = new Padding(5, 3, 5, 3);
         headerActions.WrapContents = false;
         TaskGlyph glyph = new TaskGlyph();
         taskGlyph = glyph;
@@ -687,6 +816,15 @@ public sealed class DshNotifyGui : Form
         headerActions.Controls.Add(settingsButton);
         headerActions.Controls.Add(compactToggle);
         headerActions.Controls.Add(hideButton);
+        headerActions.Width = headerActions.Padding.Horizontal + headerActions.Controls.Cast<Control>()
+            .Sum(button => button.Width + button.Margin.Horizontal);
+        header.SizeChanged += delegate
+        {
+            headerTitle.AutoSize = false;
+            headerTitle.Width = Math.Max(1, header.ClientSize.Width - headerActions.Width - headerTitle.Left - 4);
+            headerTitle.AutoEllipsis = true;
+            headerTitle.Height = 18;
+        };
         header.Controls.Add(headerActions);
         Controls.Add(header);
         cards.Dock = DockStyle.Fill;
@@ -943,6 +1081,7 @@ public sealed class DshNotifyGui : Form
     private void StoreLimits(Dictionary<string, object> message)
     {
         limitProviders.Clear();
+        availableLimitProviders.Clear();
         object value;
         IEnumerable source;
         if (message.TryGetValue("providers", out value) && (source = value as IEnumerable) != null)
@@ -953,7 +1092,16 @@ public sealed class DshNotifyGui : Form
                 if (provider != null) limitProviders.Add(provider);
             }
         }
+        if (message.TryGetValue("availableProviders", out value) && (source = value as IEnumerable) != null)
+        {
+            foreach (object item in source)
+            {
+                Dictionary<string, object> provider = item as Dictionary<string, object>;
+                if (provider != null) availableLimitProviders.Add(provider);
+            }
+        }
         limitsReceivedAt = DateTime.UtcNow;
+        foreach (SettingsForm form in settingsForms.ToArray()) form.UpdateLimitProviders(availableLimitProviders);
     }
 
     private void ApplyTheme()
@@ -1065,7 +1213,7 @@ public sealed class DshNotifyGui : Form
             int width = Math.Max(1, ClientSize.Width - rows.Padding.Horizontal);
             foreach (WidgetRow row in visibleRows.OrderBy(row => IsCompleted(row.Status) ? 0 : 1))
             {
-                rows.Controls.Add(MakeWidgetCard(row, width));
+                rows.Controls.Add(Settings.CompactWorkspaceList ? MakeCompactWorkspaceRow(row, width) : MakeWidgetCard(row, width));
             }
         }
         finally
@@ -1082,7 +1230,12 @@ public sealed class DshNotifyGui : Form
 
     private static void ClearCards(Control container)
     {
-        while (container.Controls.Count > 0) container.Controls[0].Dispose();
+        while (container.Controls.Count > 0)
+        {
+            Control child = container.Controls[0];
+            container.Controls.RemoveAt(0);
+            child.Dispose();
+        }
     }
 
     private void RenderNotices()
@@ -1183,13 +1336,16 @@ public sealed class DshNotifyGui : Form
         }
         int top = 34;
         string task = TextOf(notice, "task");
-        if (Settings.FieldTask) top = AddTaskText(card, task, top, card.Width - 24);
+        string normalizedDuration = FormatNoticeDuration(TextOf(notice, "duration"));
+        bool validDuration = normalizedDuration != "Время неизвестно" && !String.IsNullOrEmpty(normalizedDuration);
+        string inlineDuration = Settings.InlineTaskTime && validDuration ? normalizedDuration : String.Empty;
+        if (Settings.FieldTask) top = AddTaskText(card, task, top, card.Width - 24, inlineDuration);
 
         List<string> metadata = new List<string>();
-        if (Settings.FieldTime)
+        bool inlineRendered = Settings.FieldTask && !String.IsNullOrWhiteSpace(task) && task != "Задача не указана" && !String.IsNullOrEmpty(inlineDuration);
+        if (Settings.FieldTime && validDuration && !inlineRendered)
         {
-            string duration = FormatNoticeDuration(TextOf(notice, "duration"));
-            if (duration != "Время неизвестно") AddLine(metadata, duration);
+            AddLine(metadata, normalizedDuration);
         }
         if (Settings.FieldPath) AddLine(metadata, TextOf(notice, "path"));
         if (metadata.Count > 0)
@@ -1225,13 +1381,22 @@ public sealed class DshNotifyGui : Form
         return indicator;
     }
 
-    private int AddTaskText(Panel card, string task, int top, int width)
+    private int AddTaskText(Panel card, string task, int top, int width, string duration = "")
     {
         if (String.IsNullOrWhiteSpace(task) || task == "Задача не указана") return top;
-        Size measured = TextRenderer.MeasureText(task, Font, new Size(width, Int32.MaxValue),
+        int timeWidth = String.IsNullOrEmpty(duration) ? 0 : TextRenderer.MeasureText(duration, CardDetailFont).Width + 8;
+        int taskWidth = Math.Max(1, width - timeWidth);
+        Size measured = TextRenderer.MeasureText(task, Font, new Size(taskWidth, Int32.MaxValue),
             TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
         int height = Math.Min(Font.Height * 2 + 3, Math.Max(Font.Height + 1, measured.Height));
-        AddNoticeLabel(card, task, Font, Graphite.Primary, top, width, height);
+        AddNoticeLabel(card, task, Font, Graphite.Primary, top, taskWidth, height);
+        if (!String.IsNullOrEmpty(duration))
+        {
+            Label time = new Label { Text = duration, Font = CardDetailFont, ForeColor = Graphite.Secondary,
+                TextAlign = ContentAlignment.TopRight, Bounds = new Rectangle(taskWidth + 12, top, timeWidth, Font.Height + 2),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            card.Controls.Add(time);
+        }
         return top + height + 5;
     }
 
@@ -1309,7 +1474,8 @@ public sealed class DshNotifyGui : Form
             card.Controls.Add(indicator);
             top += 21;
         }
-        if (Settings.FieldTask) top = AddTaskText(card, row.TaskSummary, top, contentWidth);
+        if (Settings.FieldTask) top = AddTaskText(card, row.TaskSummary, top, contentWidth,
+            Settings.InlineTaskTime ? row.TimeText : String.Empty);
         List<string> metadata = WidgetMetadata(row);
         if (metadata.Count > 0 && top > 8) top = AddMetadataRule(card, top, contentWidth);
         foreach (string detail in metadata)
@@ -1320,6 +1486,22 @@ public sealed class DshNotifyGui : Form
         card.Height = top + 6;
         if (!String.Equals(row.Status, "idle", StringComparison.OrdinalIgnoreCase)) BindSessionOpen(card, row.SessionId, null);
         return card;
+    }
+
+    private Panel MakeCompactWorkspaceRow(WidgetRow row, int width)
+    {
+        Panel item = new Panel { Width = width, Height = 26, BackColor = Graphite.Card,
+            AccessibleName = "Рабочая область: " + (String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace), Margin = new Padding(0, 0, 0, 2) };
+        string title = String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace;
+        Label name = new Label { Text = title, AutoEllipsis = true, Font = CardDetailFont, ForeColor = Graphite.Primary,
+            Bounds = new Rectangle(8, 4, Math.Max(1, width - 126), 18), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        string state = String.IsNullOrEmpty(row.StatusText) ? StatusLabel(row.Status) : row.StatusText;
+        Panel indicator = MakeStatusIndicator(row.Status, state, new Rectangle(Math.Max(8, width - 118), 4, 112, 18), false);
+        indicator.AccessibleDescription = state;
+        indicator.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        item.Controls.Add(name); item.Controls.Add(indicator);
+        if (!String.Equals(row.Status, "idle", StringComparison.OrdinalIgnoreCase)) BindSessionOpen(item, row.SessionId, null);
+        return item;
     }
 
     private void BindSessionOpen(Control control, string sessionId, Control excluded)
@@ -1345,10 +1527,20 @@ public sealed class DshNotifyGui : Form
         return "Неизвестно";
     }
 
+    private static string ShortStatus(string status, string fallback)
+    {
+        if (status == "running") return "В работе";
+        if (status == "completed") return "Готово";
+        if (status == "interrupted" || status == "aborted") return "Стоп";
+        return fallback;
+    }
+
     private List<string> WidgetMetadata(WidgetRow row)
     {
         List<string> lines = new List<string>();
-        if (Settings.FieldTime)
+        bool inlineRendered = Settings.InlineTaskTime && Settings.FieldTask && !String.IsNullOrWhiteSpace(row.TaskSummary)
+            && row.TaskSummary != "Задача не указана" && !String.IsNullOrEmpty(row.TimeText);
+        if (Settings.FieldTime && !String.IsNullOrEmpty(row.TimeText) && !inlineRendered)
         {
             AddLine(lines, row.TimeText);
         }
@@ -1490,7 +1682,7 @@ public sealed class DshNotifyGui : Form
 
     private void ShowSettings()
     {
-        SettingsForm form = new SettingsForm(Settings, UserChanged);
+        SettingsForm form = new SettingsForm(Settings, UserChanged, availableLimitProviders);
         settingsForms.Add(form);
         form.FormClosed += delegate
         {
@@ -1636,7 +1828,7 @@ public sealed class DshNotifyGui : Form
     private static int SelfTest()
     {
         Settings settings = new Settings();
-        SettingsForm form = new SettingsForm(settings, delegate(Settings changed) { });
+        SettingsForm form = new SettingsForm(settings, delegate(Settings changed) { }, new List<Dictionary<string, object>>());
         form.Check("field-time").Checked = false;
         bool checkbox = !settings.FieldTime;
         form.Dispose();

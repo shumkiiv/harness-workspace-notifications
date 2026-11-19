@@ -36,3 +36,23 @@ test('quota color tiers preserve true zero and exact boundaries', () => {
   assert.equal(quotaTier(60), 'high')
   assert.equal(quotaTier(null), 'unknown')
 })
+
+test('hidden providers are retained without reads and richer official balances stay denominator-free', async () => {
+  let reads = 0
+  const result = await buildLimitsPayload({
+    listProviders: () => [
+      { id: 'deepseek-account', name: 'DeepSeek Account' },
+      { id: 'openai-codex', name: 'Codex' },
+    ],
+    hiddenProviders: ['deepseek-account'],
+    readers: {
+      'deepseek-account': async () => { reads += 1; return [] },
+      'openai-codex': async () => ({ credits: { balance: '12.50' }, individualLimit: { remaining: '7.25', remainingPercent: 72 } }),
+    },
+  })
+  assert.equal(reads, 0)
+  assert.deepEqual(result.providers, [{
+    id: 'openai-codex', label: 'Codex', state: 'ok', credits: { balance: '12.50' },
+    individualLimit: { remaining: '7.25', remainingPercent: 72 },
+  }])
+})

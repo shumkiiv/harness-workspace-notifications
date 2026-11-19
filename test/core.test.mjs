@@ -84,11 +84,13 @@ test('resolves registry, parent membership, and Windows path fallback', () => {
 })
 
 test('settings are PascalCase, validated, and preserve move coordinates', () => {
-  const settings = normalizeSettings({ FieldPath: false, WidgetX: 12, Unknown: true })
+  const settings = normalizeSettings({ FieldPath: false, WidgetX: 12, HiddenLimitProviders: ['deepseek-account', 'invalid', 'deepseek-account'], Unknown: true })
   assert.equal(settings.FieldPath, false)
   assert.equal(settings.WidgetX, 12)
   assert.equal('Unknown' in settings, false)
   assert.equal(DEFAULT_SETTINGS.SubagentNotices, false)
   assert.equal(DEFAULT_SETTINGS.ThemeDark, true)
   assert.equal(DEFAULT_SETTINGS.ShowLimits, false)
+  assert.equal(settings.CompactWorkspaceList, false)
+  assert.deepEqual(settings.HiddenLimitProviders, ['deepseek-account', 'invalid'])
 })
