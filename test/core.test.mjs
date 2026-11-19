@@ -52,6 +52,19 @@ test('ended turn overrides stale running agent while another member remains acti
   assert.equal(rows[0].runningCount, 1)
 })
 
+test('keeps the displayed latest outcome session identity while the workspace is running', () => {
+  const tracker = new Tracker({})
+  const completed = { id: 'completed', header: {} }
+  const running = { id: 'running', header: {} }
+  tracker.start(completed, 1, 1)
+  tracker.end(completed, 1, 'completed', 2).state.outcome = { sessionId: 'completed', task: 'Finished task', time: 2, reason: 'completed' }
+  tracker.start(running, 1, 3)
+  const [row] = aggregate([{ id: 'w', title: 'Alpha', path: '', sessionIds: ['completed', 'running'] }], tracker.sessions, [{ session: running, status: 'running' }])
+  assert.equal(row.status, 'running')
+  assert.equal(row.taskSummary, 'Finished task')
+  assert.equal(row.sessionId, 'completed')
+})
+
 test('disposed activity is never converted into completed work', () => {
   const tracker = new Tracker({})
   const session = { id: 'one', header: {} }

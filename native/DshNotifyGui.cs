@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -77,6 +78,7 @@ public sealed class WidgetRow
     public int RunningCount;
     public int CompletedCount;
     public bool Registered;
+    public string SessionId;
 }
 
 public static class Geometry
@@ -500,6 +502,7 @@ public sealed class LimitsPanel : Control
 
 public sealed class DshNotifyGui : Form
 {
+    private const string DshOpenUrl = "dsh://open";
     private const int WidgetWidth = 248;
     private const int CompactHeight = 115;
     private const int ExpandedHeight = 320;
@@ -553,6 +556,7 @@ public sealed class DshNotifyGui : Form
     private bool isShuttingDown;
     private bool lastShowWidget = true;
     private bool lastShowNotifications = true;
+    private readonly bool demoMode;
     private List<Dictionary<string, object>> limitProviders = new List<Dictionary<string, object>>();
     private DateTime limitsReceivedAt = DateTime.MinValue;
 
@@ -566,6 +570,7 @@ public sealed class DshNotifyGui : Form
 
     public DshNotifyGui(bool demo, Action<string> callback)
     {
+        demoMode = demo;
         outputCallback = callback;
         if (outputCallback == null)
         {
@@ -927,6 +932,7 @@ public sealed class DshNotifyGui : Form
             row.RunningCount = NumberOf(source, "runningCount", "active");
             row.CompletedCount = NumberOf(source, "completedCount", "completed");
             row.Registered = String.Equals(TextOf(source, "registered"), "true", StringComparison.OrdinalIgnoreCase);
+            row.SessionId = TextOf(source, "sessionId");
             if (!String.IsNullOrEmpty(row.Id))
             {
                 widgetRows[row.Id] = row;
@@ -1033,7 +1039,7 @@ public sealed class DshNotifyGui : Form
         List<WidgetRow> visibleRows = new List<WidgetRow>();
         foreach (WidgetRow row in widgetRows.Values)
         {
-            if (IsVisible(row.Status) || (row.Registered && Settings.FieldWorkspace && String.Equals(row.Status, "idle", StringComparison.OrdinalIgnoreCase)))
+            if (IsVisible(row.Status))
             {
                 visibleRows.Add(row);
             }
@@ -1194,6 +1200,7 @@ public sealed class DshNotifyGui : Form
             top += 17;
         }
         card.Height = top + 8;
+        BindSessionOpen(card, TextOf(notice, "sessionId"), close);
         return card;
     }
 
@@ -1289,13 +1296,12 @@ public sealed class DshNotifyGui : Form
         int contentWidth = Math.Max(1, width - 24);
         string title = String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace;
         int top = 8;
-        bool headingOnly = row.Registered && String.Equals(row.Status, "idle", StringComparison.OrdinalIgnoreCase) && !Settings.StatusIdle;
         if (Settings.FieldWorkspace && !String.IsNullOrWhiteSpace(title))
         {
             AddNoticeLabel(card, title, CardTitleFont, Graphite.Primary, top, contentWidth, 19);
             top += 21;
         }
-        if (Settings.FieldStatus && !headingOnly)
+        if (Settings.FieldStatus)
         {
             string status = String.IsNullOrEmpty(row.StatusText) ? StatusLabel(row.Status) : row.StatusText;
             Panel indicator = MakeStatusIndicator(row.Status, status, new Rectangle(10, top, contentWidth + 2, 18), false);
@@ -1303,19 +1309,30 @@ public sealed class DshNotifyGui : Form
             card.Controls.Add(indicator);
             top += 21;
         }
-        if (!headingOnly)
+        if (Settings.FieldTask) top = AddTaskText(card, row.TaskSummary, top, contentWidth);
+        List<string> metadata = WidgetMetadata(row);
+        if (metadata.Count > 0 && top > 8) top = AddMetadataRule(card, top, contentWidth);
+        foreach (string detail in metadata)
         {
-            if (Settings.FieldTask) top = AddTaskText(card, row.TaskSummary, top, contentWidth);
-            List<string> metadata = WidgetMetadata(row);
-            if (metadata.Count > 0 && top > 8) top = AddMetadataRule(card, top, contentWidth);
-            foreach (string detail in metadata)
-            {
-                AddNoticeLabel(card, detail, CardDetailFont, Graphite.Secondary, top, contentWidth, 17);
-                top += 18;
-            }
+            AddNoticeLabel(card, detail, CardDetailFont, Graphite.Secondary, top, contentWidth, 17);
+            top += 18;
         }
         card.Height = top + 6;
+        if (!String.Equals(row.Status, "idle", StringComparison.OrdinalIgnoreCase)) BindSessionOpen(card, row.SessionId, null);
         return card;
+    }
+
+    private void BindSessionOpen(Control control, string sessionId, Control excluded)
+    {
+        if (String.IsNullOrEmpty(sessionId)) return;
+        MouseEventHandler click = delegate(object sender, MouseEventArgs args)
+        {
+            if (args.Button != MouseButtons.Left) return;
+            Send("session.open", "sessionId", sessionId);
+            if (!demoMode) { try { System.Diagnostics.Process.Start(DshOpenUrl); } catch { } }
+        };
+        foreach (Control child in control.Controls) if (child != excluded) BindSessionOpen(child, sessionId, excluded);
+        if (control != excluded) control.MouseClick += click;
     }
 
     private static string StatusLabel(string status)
@@ -1664,7 +1681,7 @@ public sealed class DshNotifyGui : Form
         bool noEcho = output.Count == 0;
         gui.ApplyRemote(settings);
         gui.Process("{\"t\":\"widget.render\",\"rows\":["
-            + "{\"id\":\"running\",\"title\":\"Выполняется\",\"status\":\"running\","
+            + "{\"id\":\"running\",\"title\":\"Выполняется\",\"status\":\"running\",\"sessionId\":\"self-card\","
             + "\"path\":\"C:\\\\Path\",\"timeText\":\"10:00\"},"
             + "{\"id\":\"completed\",\"title\":\"Завершено\",\"status\":\"completed\"},"
             + "{\"id\":\"error\",\"title\":\"Ошибка\",\"status\":\"error\"},"
@@ -1672,14 +1689,23 @@ public sealed class DshNotifyGui : Form
             + "{\"id\":\"blocked\",\"title\":\"Блок\",\"status\":\"blocked\"},"
             + "{\"id\":\"aborted\",\"title\":\"Отмена\",\"status\":\"aborted\"},"
             + "{\"id\":\"interrupted\",\"title\":\"Прервано\",\"status\":\"interrupted\"},"
-            + "{\"id\":\"idle\",\"title\":\"Без задач\",\"status\":\"idle\"},"
+            + "{\"id\":\"idle\",\"title\":\"Без задач\",\"status\":\"idle\",\"registered\":true},"
             + "{\"id\":\"unknown\",\"title\":\"Неизвестно\",\"status\":\"unknown\"},"
             + "{\"id\":\"disposed\",\"title\":\"Закрыто\",\"status\":\"disposed\"}]}");
         gui.Process("{\"t\":\"notice.show\",\"id\":\"completed\",\"reason\":\"completed\","
             + "\"workspace\":\"Alpha\",\"task\":\"Задача\",\"statusText\":\"Готово\","
-            + "\"path\":\"C:\\\\Notice\",\"duration\":\"1 с\"}");
+            + "\"path\":\"C:\\\\Notice\",\"duration\":\"1 с\",\"sessionId\":\"self-notice\"}");
         bool allRowsShown = gui.rows.Controls.Count == 10;
         bool allNoticesShown = gui.cards.Controls.Count == 1;
+        InvokeLeftClick(gui.rows.Controls[1]);
+        InvokeLeftClick(gui.cards.Controls[0]);
+        bool interactionIds = output.Any(line => line.Contains("self-card"))
+            && output.Any(line => line.Contains("self-notice"));
+        settings.StatusIdle = false;
+        gui.UserChanged(settings);
+        bool registeredIdleFiltered = gui.rows.Controls.Count == 9;
+        settings.StatusIdle = true;
+        gui.UserChanged(settings);
         bool completedRowFirst = HasText(gui.rows.Controls[0], "Завершено")
             && !HasText(gui.rows.Controls[0], "Выполняется");
         int expandedWidth = gui.Width;
@@ -1748,7 +1774,7 @@ public sealed class DshNotifyGui : Form
         gui.Dispose();
         bool passed = checkbox && position && clamp && settingsRoundTrip && newSettings && iconDrawn
             && taskIconConsistent && countdown && taskTitle && moveEmitted && moveStored;
-        passed = passed && noEcho && allRowsShown && allNoticesShown;
+        passed = passed && noEcho && allRowsShown && allNoticesShown && interactionIds && registeredIdleFiltered;
         passed = passed && matrix && fieldsHidden && rowsReplaced && compactToggle && noticePresentation
             && completedRowFirst && completedNoticeFirst && noticeHeightAndWidth && fixedWidgetWidth && wholeCardScroll;
         Console.WriteLine("{\"t\":\"selftest\",\"pass\":" + (passed ? "true" : "false")
@@ -1766,6 +1792,8 @@ public sealed class DshNotifyGui : Form
             + ",\"noEcho\":" + JsonBool(noEcho)
             + ",\"allRowsShown\":" + JsonBool(allRowsShown)
             + ",\"allNoticesShown\":" + JsonBool(allNoticesShown)
+            + ",\"interactionIds\":" + JsonBool(interactionIds)
+            + ",\"registeredIdleFiltered\":" + JsonBool(registeredIdleFiltered)
             + ",\"statusMatrix\":" + JsonBool(matrix)
             + ",\"fieldsHidden\":" + JsonBool(fieldsHidden)
             + ",\"noticePresentation\":" + JsonBool(noticePresentation)
@@ -1797,6 +1825,12 @@ public sealed class DshNotifyGui : Form
             }
         }
         return true;
+    }
+
+    private static void InvokeLeftClick(Control control)
+    {
+        typeof(Control).GetMethod("OnMouseClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            .Invoke(control, new object[] { new MouseEventArgs(MouseButtons.Left, 1, 4, 4, 0) });
     }
 
     private static string JsonBool(bool value)

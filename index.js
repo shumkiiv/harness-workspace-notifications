@@ -6,6 +6,7 @@ import { openStore, normalizeSettings } from './src/store.mjs'
 import { launchHelper } from './src/helper.mjs'
 import { buildLimitsPayload } from './src/limits.mjs'
 import { setupQuotaBridge } from './src/quota/bridge.mjs'
+import { setupSessionOpenBridge } from './src/sessionOpen.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 
@@ -22,23 +23,34 @@ export function createRuntime(ctx, options = {}) {
     || path.join(os.homedir(), '.dsh', 'workspace-notifications')
   const store = openStore(dataDir, logger)
   let settings = store.settings()
-  let bridge = setupQuotaBridge(ctx, () => settings)
+  let bridge = { read: async () => null, close() {} }
+  let sessionOpen = { update() {}, accept: async () => false, close() {} }
   let bridgeScope
-  const attachBridge = (scope) => {
-    const previous = bridge
-    previous.close()
-    const scoped = scope && typeof scope.get === 'function' ? scope : ctx
-    const installed = setupQuotaBridge(scoped, () => settings)
-    bridge = installed
-    return () => { installed.close() }
-  }
-  if (typeof ctx.inject === 'function') bridgeScope = ctx.inject(['webServer', 'connection'], (scope) => attachBridge(scope))
   let outcomes = store.outcomes()
   const tracker = new Tracker({
     turnBoundaryOf(session) {
       return ctx.get?.('agents')?.turnBoundaryOf?.(session)
     },
   })
+  const displayedSessionIds = new Set()
+  const noticeSessions = new Map()
+  const sessionExists = async (id) => {
+    try {
+      const attached = ctx.get?.('sessions')?.get?.(id)
+      if (attached) return true
+      return Boolean(await ctx.get?.('sessionPersistence')?.stat?.(id))
+    } catch { return false }
+  }
+  const attachBridge = (scope) => {
+    bridge.close(); sessionOpen.close()
+    const scoped = scope && typeof scope.get === 'function' ? scope : ctx
+    const scopedBridge = setupQuotaBridge(scoped, () => settings, undefined, () => refreshLimits())
+    const scopedSessionOpen = setupSessionOpenBridge(scoped, undefined, sessionExists)
+    bridge = scopedBridge; sessionOpen = scopedSessionOpen
+    return () => { scopedBridge.close(); scopedSessionOpen.close() }
+  }
+  if (typeof ctx.inject === 'function') bridgeScope = ctx.inject(['webServer', 'connection'], (scope) => attachBridge(scope))
+  else attachBridge(ctx)
   const helper = (options.createHelper || launchHelper)({
     helperPath: options.helperPath || path.join(root, 'native', 'DshNotifyGui.exe'),
     demo: Boolean(options.demo),
@@ -119,7 +131,12 @@ export function createRuntime(ctx, options = {}) {
         area.sessionIds.push(id)
         areas.set(area.id, area)
       }
-      helper.send({ t: 'widget.render', rows: aggregate([...areas.values()], states, currentAgents()) })
+      const rows = aggregate([...areas.values()], states, currentAgents())
+      displayedSessionIds.clear()
+      for (const row of rows) if (row.sessionId) displayedSessionIds.add(row.sessionId)
+      for (const id of noticeSessions.values()) displayedSessionIds.add(id)
+      sessionOpen.update({ displayed: [...displayedSessionIds] })
+      helper.send({ t: 'widget.render', rows })
     } catch (error) {
       logger.warn?.(`Не удалось обновить виджет: ${error.message}`)
     }
@@ -157,6 +174,12 @@ export function createRuntime(ctx, options = {}) {
       settings = { ...settings, NoticeX: message.x, NoticeY: message.y }
       store.saveSettings(settings)
     }
+    if (message?.t === 'notice.closed' && typeof message.id === 'string') {
+      noticeSessions.delete(message.id)
+      render()
+      return
+    }
+    if (message?.t === 'session.open') void sessionOpen.accept(message)
   }
 
   function isSubagent(session) {
@@ -188,6 +211,9 @@ export function createRuntime(ctx, options = {}) {
     outcomes = store.outcomes()
     if (settings.ShowNotifications && (!isSubagent(session) || settings.SubagentNotices)) {
       helper.send({ t: 'notice.show', ...record })
+      noticeSessions.set(record.id, record.sessionId)
+      displayedSessionIds.add(record.sessionId)
+      sessionOpen.update({ displayed: [...displayedSessionIds] })
     }
   }
 
@@ -236,6 +262,7 @@ export function createRuntime(ctx, options = {}) {
       clearInterval(timer)
       clearInterval(limitsTimer)
       bridge.close()
+      sessionOpen.close()
       if (typeof bridgeScope === 'function') bridgeScope()
       else if (bridgeScope && typeof bridgeScope.dispose === 'function') await bridgeScope.dispose()
       await helper.close()

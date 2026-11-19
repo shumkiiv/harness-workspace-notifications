@@ -143,6 +143,11 @@ export function aggregate(workspaces, states, agents = []) {
     const running = members.filter(({ id, state }) => stateIsRunning(id, state, statusBySession.get(id)))
     const outcomes = members.map(({ state }) => state.outcome).filter(Boolean).sort((a, b) => b.time - a.time)
     const latest = outcomes[0]
+    const latestRunning = running.map(({ id, state }) => ({ id, state })).sort((a, b) => {
+      const aTime = a.state.open.size ? Math.max(...[...a.state.open.values()].map((turn) => turn.time || 0)) : 0
+      const bTime = b.state.open.size ? Math.max(...[...b.state.open.values()].map((turn) => turn.time || 0)) : 0
+      return bTime - aTime
+    })[0]
     const disposed = members.length > 0 && members.every(({ state }) => state.disposed) && !latest
     const status = running.length ? 'running' : (disposed ? 'disposed' : (latest?.reason || 'idle'))
     const completedCount = outcomes.filter((outcome) => outcome.reason === 'completed').length
@@ -154,7 +159,8 @@ export function aggregate(workspaces, states, agents = []) {
       registered: workspace.registered === true,
       status,
       statusText: reasonText(status),
-      taskSummary: latest?.task || '',
+      taskSummary: latest?.task || latestRunning?.state.task || '',
+      sessionId: latest?.sessionId || latestRunning?.id || '',
       timeText: latest?.duration || '',
       runningCount: running.length,
       completedCount,

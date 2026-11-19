@@ -49,3 +49,18 @@ test('authenticated Desktop proxy can forward JSON without an Origin header', as
   assert.deepEqual(await f.bridge.read(), [{ percent: 35, windowSeconds: 18000, resetAt: null }])
   f.bridge.close()
 })
+
+test('registers before origin is available and refreshes only after an accepted payload', async () => {
+  let originReady = false; let route; let accepted = 0
+  const ctx = { get(name) {
+    if (name === 'webServer') return { getOrigin: () => { if (!originReady) throw new Error('not ready'); return 'http://127.0.0.1:8811' }, register: (value) => { route = value; return () => {} } }
+    if (name === 'connection') return { requestRejection: () => undefined }
+  } }
+  setupQuotaBridge(ctx, () => ({ ShowLimits: true }), () => 1, () => { accepted += 1 })
+  assert.ok(route)
+  assert.equal((await request(route.handler, { method: 'GET', headers: { host: '127.0.0.1:8811' } })).status, 403)
+  originReady = true
+  const body = JSON.stringify({ provider: 'openai-codex', windows: [{ percent: 50, windowSeconds: 60 }] })
+  assert.equal((await request(route.handler, { method: 'POST', headers: { host: '127.0.0.1:8811', 'content-type': 'application/json' }, body })).status, 204)
+  assert.equal(accepted, 1)
+})

@@ -14,14 +14,14 @@ function valid(payload) {
     && (w.resetAt == null || (Number.isInteger(w.resetAt) && w.resetAt >= 0 && w.resetAt <= 1e10)))
 }
 
-export function setupQuotaBridge(ctx, getSettings, now = () => Date.now()) {
+export function setupQuotaBridge(ctx, getSettings, now = () => Date.now(), onAccepted = () => {}) {
   const web = ctx.get?.('webServer'); const connection = ctx.get?.('connection')
   if (!web || !connection || typeof web.register !== 'function' || typeof connection.requestRejection !== 'function') return { read: async () => null, close() {} }
   let cache = null; let closed = false
-  let origin; try { origin = web.getOrigin() } catch { return { read: async () => null, close() {} } }
-  let originUrl; try { originUrl = new URL(origin) } catch { return { read: async () => null, close() {} } }
-  if (originUrl.hostname !== '127.0.0.1' && originUrl.hostname !== '[::1]' && originUrl.hostname !== 'localhost') return { read: async () => null, close() {} }
   const registeredDispose = web.register({ kind: 'exact', path: PATH, handler: async (req, res) => {
+    let origin; let originUrl
+    try { origin = web.getOrigin(); originUrl = new URL(origin) } catch { return reply(res, 403, { error: 'forbidden' }) }
+    if (originUrl.hostname !== '127.0.0.1' && originUrl.hostname !== '[::1]' && originUrl.hostname !== 'localhost') return reply(res, 403, { error: 'forbidden' })
     let rejection; try { rejection = connection.requestRejection(req) } catch { return reply(res, 403, { error: 'forbidden' }) }
     if (rejection !== undefined || !local(req) || req.headers.host !== originUrl.host) return reply(res, rejection || 403, { error: 'forbidden' })
     if (req.method === 'GET') return reply(res, 200, { enabled: Boolean(getSettings().ShowLimits) })
@@ -41,6 +41,7 @@ export function setupQuotaBridge(ctx, getSettings, now = () => Date.now()) {
       if (closed || !getSettings().ShowLimits) return reply(res, 403, { error: 'forbidden' })
       cache = { windows: payload.windows.map((w) => ({ percent: w.percent, windowSeconds: w.windowSeconds, resetAt: w.resetAt == null ? null : w.resetAt })), at: now() }
       reply(res, 204, {})
+      try { onAccepted() } catch {}
     })
   } })
   let disposed = false

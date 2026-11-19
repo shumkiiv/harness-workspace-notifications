@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createRuntime } from '../index.js'
 
+
 test('runtime sends PascalCase settings once and persists UI changes without echo', async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-workspace-test-'))
   const listeners = new Map()
