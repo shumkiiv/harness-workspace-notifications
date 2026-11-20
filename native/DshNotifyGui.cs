@@ -218,6 +218,8 @@ public sealed class SettingsForm : Form
     private const int SettingsContentWidth = 382;
     private readonly Settings value;
     private readonly Action<Settings> changed;
+    private readonly Action<TelegramCredentials> telegramChanged;
+    private readonly TelegramPublisher telegramPublisher;
     private readonly Dictionary<string, CheckBox> checks = new Dictionary<string, CheckBox>();
     private readonly Dictionary<Control, int> pages = new Dictionary<Control, int>();
     private readonly ComboBox soundPreset = new SettingsChoice();
@@ -245,12 +247,14 @@ public sealed class SettingsForm : Form
 
     public Button SaveButton { get; private set; }
 
-    public SettingsForm(Settings current, Action<Settings> onChanged, List<Dictionary<string, object>> providers,
+    internal SettingsForm(Settings current, Action<Settings> onChanged, List<Dictionary<string, object>> providers,
         Action<string> previewSound = null, Action<string> onQuotaKeyChanged = null, bool quotaVaultEnabled = true,
-        Rectangle? workingArea = null)
+        Rectangle? workingArea = null, Action<TelegramCredentials> onTelegramChanged = null, TelegramPublisher publisher = null)
     {
         value = current;
         changed = onChanged;
+        telegramChanged = onTelegramChanged;
+        telegramPublisher = publisher;
         quotaKeyChanged = onQuotaKeyChanged;
         allowQuotaVault = quotaVaultEnabled;
         layoutWorkingArea = workingArea;
@@ -312,6 +316,9 @@ public sealed class SettingsForm : Form
         Button preview = new Button { Text = "▶", AccessibleName = "Прослушать звук", FlatStyle = FlatStyle.Flat, Enabled = previewSound != null };
         preview.Click += delegate { if (previewSound != null) previewSound(SelectedSound()); };
         AddGeneralChoice(soundPreset, "notification-sound-preset", "Сигнал уведомления", ref top, preview);
+        Button telegram = new Button { Text = "Настроить Telegram", AccessibleName = "Настроить Telegram", FlatStyle = FlatStyle.Flat, BackColor = Graphite.Card, ForeColor = Graphite.Primary, Enabled = telegramPublisher != null };
+        telegram.SetBounds(RowInset, top, 180, 24); telegram.Click += delegate { TelegramSettingsUi.Open(this, value.ShowNotifications && value.StatusError, telegramPublisher, telegramChanged); };
+        Controls.Add(telegram); pages.Add(telegram, page); top += 28;
         page = 1; top = 72;
         Add("field-workspace", "Рабочая область", value.FieldWorkspace, ref top);
         Add("field-task", "Задача", value.FieldTask, ref top);
@@ -1591,6 +1598,10 @@ public sealed class DshNotifyGui : Form
     private List<Dictionary<string, object>> limitProviders = new List<Dictionary<string, object>>();
     private List<Dictionary<string, object>> availableLimitProviders = new List<Dictionary<string, object>>();
     private DateTime limitsReceivedAt = DateTime.MinValue;
+    private readonly TelegramPublisher telegramPublisher;
+    private TelegramCredentials telegramSettings;
+    private string lastTelegramData;
+    private DateTime lastTelegramSourceAt = DateTime.MinValue;
 
     private const int SettingChangeMessage = 0x001A;
     private const int SetRedrawMessage = 0x000B;
@@ -1656,7 +1667,7 @@ public sealed class DshNotifyGui : Form
     {
     }
 
-    internal DshNotifyGui(bool demo, Action<string> outputCallback, Action<string> sound, Func<bool> harnessOpenProbe)
+    internal DshNotifyGui(bool demo, Action<string> outputCallback, Action<string> sound, Func<bool> harnessOpenProbe, bool enableTelegram = true)
     {
         demoMode = demo;
         playNoticeSound = sound;
@@ -1670,6 +1681,15 @@ public sealed class DshNotifyGui : Form
             output.AutoFlush = true;
         }
         Settings = new Settings();
+        telegramPublisher = new TelegramPublisher(new TelegramTransport(), ReadTelegramHtml(),
+            delegate(Action action) { System.Threading.ThreadPool.QueueUserWorkItem(delegate { action(); }); },
+            delegate(Action action) { try { BeginInvoke(action); } catch { } },
+            delegate { return DateTime.UtcNow; }, TelegramCredentialStore.Save);
+        if (!demoMode && enableTelegram)
+        {
+            TelegramCredentialStore.TryRead(out telegramSettings);
+            telegramPublisher.Load(telegramSettings);
+        }
         harnessNoticeTimer.Interval = HarnessProbeIntervalMilliseconds;
         harnessNoticeTimer.Tick += delegate { RefreshHarnessNoticeSuppressionFromTimer(); };
         Text = (demo ? "[ДЕМО] " : "") + "Задачи";
@@ -1835,6 +1855,7 @@ public sealed class DshNotifyGui : Form
         {
             ShowSettings();
         });
+        menu.Items.Add("Telegram", null, delegate { if (!demoMode) TelegramSettingsUi.Open(this, Settings.ShowNotifications && Settings.StatusError, telegramPublisher, TelegramChanged); });
         tray.ContextMenuStrip = menu;
         tray.Visible = true;
     }
@@ -2040,15 +2061,18 @@ public sealed class DshNotifyGui : Form
         }
         else if (type == "widget.render")
         {
-            if (String.Equals(lastWidgetSnapshot, line, StringComparison.Ordinal)) return;
+            lastTelegramSourceAt = DateTime.UtcNow;
+            if (String.Equals(lastWidgetSnapshot, line, StringComparison.Ordinal)) { PublishTelegram(); return; }
             StoreRows(message);
             RenderWidget();
+            PublishTelegram();
             lastWidgetSnapshot = line;
         }
         else if (type == "widget.limits")
         {
             StoreLimits(message);
             RenderWidget();
+            PublishTelegram();
         }
         else if (type == "quota.fetch")
         {
@@ -2061,6 +2085,10 @@ public sealed class DshNotifyGui : Form
         }
         else if (type == "notice.show")
         {
+            if (String.Equals(StatusOf(message), "error", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!demoMode && Settings.ShowNotifications && Settings.StatusError) telegramPublisher.NotifyError();
+            }
             if (SuppressNewCompletedNotice(message)) return;
             bool added = StoreNotice(message);
             RefreshHarnessNoticeSuppression();
@@ -2076,6 +2104,30 @@ public sealed class DshNotifyGui : Form
         {
             Shutdown();
         }
+    }
+
+    private void PublishTelegram()
+    {
+        if (demoMode) return;
+        if (lastTelegramSourceAt == DateTime.MinValue) return;
+        lastTelegramData = TelegramCardPolicy.Build(widgetRows.Values, Settings.ShowLimits ? limitProviders : null, lastTelegramSourceAt);
+        telegramPublisher.Tick(lastTelegramData, TelegramPublisher.StableKey(lastTelegramData));
+    }
+
+    private void TelegramChanged(TelegramCredentials changed)
+    {
+        telegramSettings = changed;
+        if (!String.IsNullOrEmpty(lastTelegramData)) telegramPublisher.Tick(lastTelegramData, TelegramPublisher.StableKey(lastTelegramData));
+    }
+
+    private static string ReadTelegramHtml()
+    {
+        try
+        {
+            using (Stream stream = typeof(DshNotifyGui).Assembly.GetManifestResourceStream("Telegram.widget.html"))
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8)) return reader.ReadToEnd();
+        }
+        catch { return String.Empty; }
     }
 
     private void StoreRows(Dictionary<string, object> message)
@@ -2925,7 +2977,7 @@ public sealed class DshNotifyGui : Form
     private void ShowSettings()
     {
         SettingsForm form = new SettingsForm(Settings, UserChanged, availableLimitProviders, playNoticeSound,
-            delegate(string provider) { Send("quota-key.changed", "provider", provider); }, !demoMode);
+            delegate(string provider) { Send("quota-key.changed", "provider", provider); }, !demoMode, null, TelegramChanged, demoMode ? null : telegramPublisher);
         settingsForms.Add(form);
         form.FormClosed += delegate
         {
@@ -2990,6 +3042,7 @@ public sealed class DshNotifyGui : Form
             return;
         }
         isShuttingDown = true;
+        telegramPublisher.Close();
         foreach (Form form in new List<Form>(settingsForms))
         {
             form.Close();
@@ -3081,7 +3134,7 @@ public sealed class DshNotifyGui : Form
         Settings settings = new Settings();
         SettingsForm form = new SettingsForm(settings, delegate(Settings changed) { }, new List<Dictionary<string, object>>());
         form.Check("field-time").Checked = false;
-        bool checkbox = !settings.FieldTime && WidgetQuotaKeys.SelfTest();
+        bool checkbox = !settings.FieldTime && WidgetQuotaKeys.SelfTest() && TelegramCardTests.SelfTest();
         bool soundDisabledByDefault = !settings.NotificationSound;
         form.Check("notice-sound").Checked = true;
         bool soundCheckbox = settings.NotificationSound;
@@ -3227,7 +3280,7 @@ public sealed class DshNotifyGui : Form
         bool harnessOpen = true;
         List<string> harnessOutput = new List<string>();
         DshNotifyGui harnessGui = new DshNotifyGui(false, delegate(string line) { harnessOutput.Add(line); },
-            delegate(string preset) { soundCount++; }, delegate { return harnessOpen; });
+            delegate(string preset) { soundCount++; }, delegate { return harnessOpen; }, false);
         Settings harnessSettings = new Settings();
         harnessSettings.HideCompletedWhenHarnessOpen = true;
         harnessGui.ApplyRemote(harnessSettings);
@@ -3255,7 +3308,7 @@ public sealed class DshNotifyGui : Form
         DshNotifyGui gui = new DshNotifyGui(false, delegate(string line)
         {
             output.Add(line);
-        }, delegate(string preset) { soundCount++; playedPreset = preset; });
+        }, delegate(string preset) { soundCount++; playedPreset = preset; }, null, false);
         bool iconDrawn;
         using (Bitmap iconBitmap = new Bitmap(gui.taskGlyph.Width, gui.taskGlyph.Height))
         {
