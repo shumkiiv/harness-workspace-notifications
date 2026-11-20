@@ -482,15 +482,20 @@ public sealed class SettingsForm : Form
 
     public void RefreshTheme()
     {
+        SyncAppearanceControls();
+        refreshedDuringSave = true;
+        ApplyInterfaceStyleRebuild();
+        ApplyWindowScale();
+    }
+
+    internal void SyncAppearanceControls()
+    {
         syncing = true;
         themeMode.SelectedIndex = ThemeIndex(value.Theme);
         interfaceStyle.SelectedIndex = value.NormalizedInterfaceStyle == "modern" ? 1 : 0;
         checks["show-limits"].Checked = value.ShowLimits;
         checks["compact-widget"].Checked = value.CompactWidget;
         syncing = false;
-        refreshedDuringSave = true;
-        ApplyInterfaceStyleRebuild();
-        ApplyWindowScale();
     }
 
     private static void ApplyOwnPalette(Control control)
@@ -774,6 +779,8 @@ public sealed class SettingsForm : Form
         if (syncing) return;
         refreshedDuringSave = false;
         bool wasCompactWorkspaceList = value.CompactWorkspaceList;
+        string previousScale = value.WidgetScale;
+        string previousStyle = value.NormalizedInterfaceStyle;
         value.ShowWidget = checks["show-widget"].Checked;
         value.ShowNotifications = checks["show-notices"].Checked;
         value.HideCompletedWhenHarnessOpen = checks["hide-completed-harness-open"].Checked;
@@ -815,9 +822,10 @@ public sealed class SettingsForm : Form
         value.StatusUnknown = checks["status-unknown"].Checked;
         value.StatusDisposed = checks["status-disposed"].Checked;
         changed(value);
-        if (!refreshedDuringSave)
+        bool styleChanged = value.NormalizedInterfaceStyle != previousStyle;
+        if (!refreshedDuringSave && (styleChanged || value.WidgetScale != previousScale))
         {
-            ApplyInterfaceStyleRebuild();
+            if (styleChanged) ApplyInterfaceStyleRebuild();
             ApplyWindowScale();
         }
     }
@@ -1573,6 +1581,7 @@ public sealed class DshNotifyGui : Form
     private bool widgetUserMoving;
     private bool noticesManuallyHidden;
     private bool completedNoticesHiddenByHarness;
+    private bool themeApplied;
     internal int NoticeRenderCountForTest { get; private set; }
     internal bool HarnessNoticeTimerEnabledForTest { get { return harnessNoticeTimer.Enabled; } }
     private bool isShuttingDown;
@@ -1617,9 +1626,15 @@ public sealed class DshNotifyGui : Form
 
     private void ApplyEffectiveTheme()
     {
+        if (!ThemeVisualsChanged())
+        {
+            foreach (SettingsForm form in settingsForms) form.SyncAppearanceControls();
+            return;
+        }
         Graphite.ApplyTheme(EffectiveThemeDark(Settings));
         ModernTheme.Apply(Settings != null && Settings.NormalizedInterfaceStyle == "modern", Graphite.IsDark);
         ApplyTheme();
+        themeApplied = true;
     }
     private int Px(int value) { return (int)Math.Round(value * WidgetScaleFactor); }
     private Font WidgetFont(float size, FontStyle style = FontStyle.Regular) { return new Font("Segoe UI", size * WidgetScaleFactor, style); }
@@ -2001,7 +2016,7 @@ public sealed class DshNotifyGui : Form
 
     private bool ThemeVisualsChanged()
     {
-        return ModernTheme.Enabled != (Settings.NormalizedInterfaceStyle == "modern")
+        return !themeApplied || ModernTheme.Enabled != (Settings.NormalizedInterfaceStyle == "modern")
             || Graphite.IsDark != EffectiveThemeDark(Settings);
     }
 
@@ -3486,13 +3501,15 @@ public sealed class DshNotifyGui : Form
         bool providerBadgeAliases = deepSeekBadge != null && codexBadge != null && zaiBadge != null && genericBadge != null
             && deepSeekBadge == LimitsPanel.ProviderBadge("configured-api-route", "DeepSeek")
             && new[] { deepSeekBadge, codexBadge, zaiBadge, genericBadge }.Distinct().Count() == 4;
+        bool settingsTogglesKeepLayoutStable = SettingsTogglesKeepLayoutStable();
         bool passed = checkbox && position && clamp && settingsRoundTrip && newSettings && iconDrawn
             && taskIconConsistent && providerBadgeAliases && notificationSound && notificationSoundPresets
             && countdown && taskTitle && moveEmitted && moveStored && noTaskbarButtons
             && interfaceStyleDefaultsClassic && interfaceStyleModern && interfaceStyleReturnsClassic && modernPaintCoversBuffer;
         passed = passed && settingsScaleLarge && settingsScaleSmall && settingsScaleNoDrift && settingsChildrenFit && providerScaleStable
             && explicitLightTheme && systemThemeDoesNotOverwriteLegacy && settingsNoScrollbars && settingsPagingKeepsLimitRowsReachable
-            && settingsFitsWorkingAreaAtAllScales && settingsThemesKeepLayoutStable && settingsCardsRedraw;
+            && settingsFitsWorkingAreaAtAllScales && settingsThemesKeepLayoutStable && settingsCardsRedraw
+            && settingsTogglesKeepLayoutStable;
         passed = passed && noEcho && allRowsShown && allNoticesShown && interactionIds && registeredIdleFiltered;
         passed = passed && matrix && fieldsHidden && rowsReplaced && compactToggle && noticePresentation
             && completedRowFirst && completedNoticeFirst && noticeHeightAndWidth && fixedWidgetWidth && wholeCardScroll;
@@ -3542,6 +3559,7 @@ public sealed class DshNotifyGui : Form
             + ",\"settingsFitsWorkingAreaAtAllScales\":" + JsonBool(settingsFitsWorkingAreaAtAllScales)
             + ",\"settingsThemesKeepLayoutStable\":" + JsonBool(settingsThemesKeepLayoutStable)
             + ",\"settingsCardsRedraw\":" + JsonBool(settingsCardsRedraw)
+            + ",\"settingsTogglesKeepLayoutStable\":" + JsonBool(settingsTogglesKeepLayoutStable)
             + ",\"moveEmitted\":" + JsonBool(moveEmitted)
             + ",\"moveStored\":" + JsonBool(moveStored)
             + ",\"noEcho\":" + JsonBool(noEcho)
@@ -3560,6 +3578,38 @@ public sealed class DshNotifyGui : Form
             + ",\"rowsReplaced\":" + JsonBool(rowsReplaced)
             + ",\"compactToggle\":" + JsonBool(compactToggle) + "}}");
         return passed ? 0 : 1;
+    }
+
+    private static bool SettingsTogglesKeepLayoutStable()
+    {
+        foreach (string style in new[] { "classic", "modern" })
+        {
+            int saved = 0;
+            using (var gui = new DshNotifyGui(true, delegate(string message)
+            {
+                if (message.Contains("settings.changed")) saved++;
+            }, delegate { }))
+            {
+                var settings = new Settings { Theme = "light", InterfaceStyle = style, CompactWidget = false };
+                gui.ApplyRemote(settings);
+                gui.Show();
+                gui.ShowSettings();
+                SettingsForm form = gui.settingsForms.Single();
+                Application.DoEvents();
+                Rectangle bounds = form.Bounds;
+                bool layoutChanged = false;
+                form.Layout += delegate { layoutChanged = true; };
+                form.SizeChanged += delegate { layoutChanged = true; };
+                form.Check("notice-sound").Checked = true;
+                form.Check("hide-completed-harness-open").Checked = true;
+                form.Check("compact-widget").Checked = true;
+                Application.DoEvents();
+                if (layoutChanged || form.Bounds != bounds || !form.Visible || saved != 3
+                    || !settings.NotificationSound || !settings.HideCompletedWhenHarnessOpen || !settings.CompactWidget)
+                    return false;
+            }
+        }
+        return true;
     }
 
     private static bool HasMatchingShellIcon(Icon expected)
