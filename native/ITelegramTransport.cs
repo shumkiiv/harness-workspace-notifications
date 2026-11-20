@@ -31,6 +31,13 @@ internal sealed class TelegramTransport : ITelegramTransport
     private const int MaximumResponseBytes = 65536;
     private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = MaximumResponseBytes };
 
+    static TelegramTransport()
+    {
+        // This helper targets the legacy .NET Framework. Use the same secure
+        // protocol as the quota transport even when no quota reader has run.
+        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+    }
+
     public TelegramReply GetChat(string token, long chatId) { return Call(token, "getChat", new Dictionary<string, object> { { "chat_id", chatId } }); }
     public TelegramReply SendWidget(string token, long chatId, string html, string chatData)
     {
