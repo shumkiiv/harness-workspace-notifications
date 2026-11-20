@@ -2821,6 +2821,11 @@ public sealed class DshNotifyGui : Form
         bool interfaceStyleDefaultsClassic = interfaceStyles.SelectedIndex == 0 && settings.NormalizedInterfaceStyle == "classic";
         interfaceStyles.SelectedIndex = 1;
         bool interfaceStyleModern = settings.NormalizedInterfaceStyle == "modern" && ModernTheme.Enabled && form.Handle == settingsHandle;
+        bool modernPaintCoversBuffer;
+        using (var toggle = new ModernToggle { Text = "Виджет", Size = new Size(280, 30), BackColor = ModernTheme.Card })
+        using (var heading = new ModernSectionLabel { Text = "Виджет", HelpText = "Задачи рядом с рабочим столом",
+            Size = new Size(280, 36), BackColor = ModernTheme.Card })
+            modernPaintCoversBuffer = PaintCoversBuffer(toggle) && PaintCoversBuffer(heading);
         interfaceStyles.SelectedIndex = 0;
         bool interfaceStyleReturnsClassic = settings.NormalizedInterfaceStyle == "classic" && !ModernTheme.Enabled && form.Handle == settingsHandle;
         form.Dispose();
@@ -3152,7 +3157,7 @@ public sealed class DshNotifyGui : Form
         bool passed = checkbox && position && clamp && settingsRoundTrip && newSettings && iconDrawn
             && taskIconConsistent && providerBadgeAliases && notificationSound && notificationSoundPresets
             && countdown && taskTitle && moveEmitted && moveStored && noTaskbarButtons
-            && interfaceStyleDefaultsClassic && interfaceStyleModern && interfaceStyleReturnsClassic;
+            && interfaceStyleDefaultsClassic && interfaceStyleModern && interfaceStyleReturnsClassic && modernPaintCoversBuffer;
         passed = passed && settingsScaleLarge && settingsScaleSmall && settingsScaleNoDrift && settingsChildrenFit && providerScaleStable
             && explicitLightTheme && systemThemeDoesNotOverwriteLegacy && settingsNoScrollbars && settingsPagingKeepsLimitRowsReachable
             && settingsFitsWorkingAreaAtAllScales && settingsThemesKeepLayoutStable;
@@ -3169,6 +3174,7 @@ public sealed class DshNotifyGui : Form
             + ",\"interfaceStyleDefaultsClassic\":" + JsonBool(interfaceStyleDefaultsClassic)
             + ",\"interfaceStyleModern\":" + JsonBool(interfaceStyleModern)
             + ",\"interfaceStyleReturnsClassic\":" + JsonBool(interfaceStyleReturnsClassic)
+            + ",\"modernPaintCoversBuffer\":" + JsonBool(modernPaintCoversBuffer)
             + ",\"iconDrawn\":" + JsonBool(iconDrawn)
             + ",\"taskIconConsistent\":" + JsonBool(taskIconConsistent)
             + ",\"providerBadgeAliases\":" + JsonBool(providerBadgeAliases)
@@ -3237,6 +3243,24 @@ public sealed class DshNotifyGui : Form
     {
         typeof(Control).GetMethod("OnMouseClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
             .Invoke(control, new object[] { new MouseEventArgs(MouseButtons.Left, 1, 4, 4, 0) });
+    }
+
+    private static bool PaintCoversBuffer(Control control)
+    {
+        using (var image = new Bitmap(control.Width + 28, control.Height + 28))
+        using (var graphics = Graphics.FromImage(image))
+        {
+            graphics.Clear(Color.Magenta);
+            graphics.TranslateTransform(16, 16);
+            var clip = new Rectangle(0, 0, control.Width - 8, control.Height - 3);
+            graphics.SetClip(clip);
+            using (var args = new PaintEventArgs(graphics, clip))
+                control.GetType().GetMethod("OnPaint", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(control, new object[] { args });
+            return image.GetPixel(16 + control.Width - 75, 20).ToArgb() == control.BackColor.ToArgb()
+                && image.GetPixel(4, 4).ToArgb() == Color.Magenta.ToArgb()
+                && image.GetPixel(16 + control.Width - 1, 20).ToArgb() == Color.Magenta.ToArgb();
+        }
     }
 
     private static string JsonBool(bool value)

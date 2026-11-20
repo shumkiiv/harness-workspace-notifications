@@ -23,4 +23,5 @@ test('native helper self-test reports every named check', () => {
   assert.equal(report.checks.interfaceStyleDefaultsClassic, true)
   assert.equal(report.checks.interfaceStyleModern, true)
   assert.equal(report.checks.interfaceStyleReturnsClassic, true)
+  assert.equal(report.checks.modernPaintCoversBuffer, true)
 })

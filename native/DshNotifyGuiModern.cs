@@ -7,6 +7,9 @@ using System.Windows.Forms;
 // the real WinForms controls; this class only changes their presentation.
 internal static class ModernTheme
 {
+    internal const TextFormatFlags TextFlags = TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix |
+        TextFormatFlags.EndEllipsis | TextFormatFlags.PreserveGraphicsClipping |
+        TextFormatFlags.PreserveGraphicsTranslateTransform;
     internal static bool Enabled { get; private set; }
     internal static Color Surface { get; private set; }
     internal static Color Card { get; private set; }
@@ -76,6 +79,10 @@ internal sealed class ModernToggle : CheckBox
     protected override void OnPaint(PaintEventArgs args)
     {
         if (!ModernTheme.Enabled) { base.OnPaint(args); return; }
+        // ButtonBase is opaque and leaves the background to its normal painter,
+        // which this modern rendering path replaces.
+        using (Brush background = new SolidBrush(BackColor))
+            args.Graphics.FillRectangle(background, ClientRectangle);
         Rectangle track = new Rectangle(Math.Max(0, Width - 42), Math.Max(1, (Height - 20) / 2), 38, 20);
         using (GraphicsPath path = ModernTheme.Rounded(track, 10))
         using (Brush fill = new SolidBrush(Checked ? ModernTheme.Accent : ModernTheme.CardBorder))
@@ -86,7 +93,7 @@ internal sealed class ModernToggle : CheckBox
             args.Graphics.FillEllipse(thumb, left, track.Top + 2, 16, 16);
         }
         TextRenderer.DrawText(args.Graphics, Text, Font, new Rectangle(0, 0, Math.Max(1, track.Left - 5), Height),
-            ModernTheme.TextPrimary, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            ModernTheme.TextPrimary, ModernTheme.TextFlags | TextFormatFlags.VerticalCenter);
         if (Focused) ControlPaint.DrawFocusRectangle(args.Graphics, ClientRectangle, ModernTheme.TextPrimary, BackColor);
     }
 }
@@ -104,10 +111,12 @@ internal sealed class ModernSectionLabel : Label
     protected override void OnPaint(PaintEventArgs args)
     {
         if (!ModernTheme.Enabled) { base.OnPaint(args); return; }
+        using (Brush background = new SolidBrush(BackColor))
+            args.Graphics.FillRectangle(background, ClientRectangle);
         TextRenderer.DrawText(args.Graphics, Text, Font, new Rectangle(0, 0, Width, Font.Height + 2), ModernTheme.Accent,
-            TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            ModernTheme.TextFlags);
         TextRenderer.DrawText(args.Graphics, HelpText ?? String.Empty, Font,
             new Rectangle(0, Font.Height + 1, Width, Math.Max(1, Height - Font.Height - 1)), ModernTheme.TextSecondary,
-            TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            ModernTheme.TextFlags);
     }
 }
