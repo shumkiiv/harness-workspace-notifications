@@ -21,7 +21,7 @@ internal static class WidgetQuotaKeys
 
     static WidgetQuotaKeys()
     {
-        ServicePointManager.SecurityProtocol = (SecurityProtocolType)0;
+        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -78,38 +78,25 @@ internal static class WidgetQuotaKeys
             Label help = new Label { Text = "Ключ используется только для лимитов и хранится в Windows.", Left = 14, Top = 40, Width = 362, Height = 30, ForeColor = Graphite.Secondary, BackColor = Graphite.Base };
             Label status = new Label { Left = 14, Top = 74, Width = 362, Height = 18, ForeColor = Graphite.Secondary, BackColor = Graphite.Base };
             TextBox input = new TextBox { Left = 14, Top = 98, Width = 362, UseSystemPasswordChar = true, MaxLength = 512, AccessibleName = "Ключ " + title, BackColor = Graphite.Card, ForeColor = Graphite.Primary };
-            Button save = Button("Сохранить", 14, 108, "Сохранить ключ " + title);
-            Button remove = Button("Удалить", 130, 92, "Удалить ключ " + title);
-            Button close = Button("Готово", 284, 92, "Закрыть ввод ключа");
-            close.DialogResult = DialogResult.Cancel;
+            Button save = Button("Сохранить", 14, 362, "Сохранить ключ " + title);
             bool stored = false;
             int error = 0;
             if (allowVault) stored = HasKey(provider, out error);
-            status.Text = allowVault ? (error == 0 ? (stored ? "Состояние: сохранён" : "Состояние: не задан") : "Состояние: хранилище недоступно") : "В демонстрации ключи не используются";
+            status.Text = allowVault ? (error == 0 ? (stored ? "********" : "Состояние: не задан") : "Состояние: хранилище недоступно") : "В демонстрации ключи не используются";
             save.Enabled = allowVault;
-            remove.Enabled = allowVault && stored;
+            form.AcceptButton = save;
             save.Click += delegate
             {
                 string value = input.Text;
                 input.Clear();
+                if (String.IsNullOrEmpty(value) && stored) { form.DialogResult = DialogResult.OK; return; }
                 if (!ValidKey(value)) { status.Text = "Ключ не сохранён: неверный формат"; return; }
                 if (!WriteKey(provider, value, out error)) { status.Text = "Ключ не сохранён: ошибка хранилища"; return; }
                 value = String.Empty;
-                stored = true;
-                remove.Enabled = true;
-                status.Text = "Состояние: сохранён";
                 if (changed != null) changed(provider);
+                form.DialogResult = DialogResult.OK;
             };
-            remove.Click += delegate
-            {
-                if (!DeleteKey(provider, out error)) { status.Text = "Ключ не удалён: ошибка хранилища"; return; }
-                input.Clear();
-                stored = false;
-                remove.Enabled = false;
-                status.Text = "Состояние: не задан";
-                if (changed != null) changed(provider);
-            };
-            form.Controls.Add(name); form.Controls.Add(help); form.Controls.Add(status); form.Controls.Add(input); form.Controls.Add(save); form.Controls.Add(remove); form.Controls.Add(close);
+            form.Controls.Add(name); form.Controls.Add(help); form.Controls.Add(status); form.Controls.Add(input); form.Controls.Add(save);
             form.FormClosed += delegate { input.Clear(); };
             form.ShowDialog();
         }
@@ -387,6 +374,14 @@ internal static class WidgetQuotaKeys
         if (CredDelete(Target(provider), CredentialTypeGeneric, 0)) return true;
         error = Marshal.GetLastWin32Error();
         return error == 1168;
+    }
+
+    public static bool DeleteStoredKey(string provider, Action<string> changed)
+    {
+        int error;
+        if (!DeleteKey(provider, out error)) return false;
+        if (changed != null) changed(provider);
+        return true;
     }
 
     private static bool ValidKey(string key)

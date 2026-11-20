@@ -182,14 +182,15 @@ export function createRuntime(ctx, options = {}) {
       }
     }
     if (enabled && account && typeof account.getBalance === 'function' && !hidden.includes('deepseek-account')) {
+      const cache = accountBalanceCache
       readers['deepseek-account'] = async () => {
         if (!current() || settings.HiddenLimitProviders.includes('deepseek-account')) return null
         const clock = Date.now()
-        if (accountBalanceCache.pending) return accountBalanceCache.pending
-        if (clock - accountBalanceCache.at <= 10 * 60 * 1000) return accountBalanceCache.value
+        if (cache.pending) return cache.pending
+        if (clock - cache.at <= 10 * 60 * 1000) return cache.value
         const version = ctx.get?.('clientModules')?.graph?.()?.release?.version
         if (typeof version !== 'string' || !version) return null
-        accountBalanceCache.pending = Promise.resolve(account.getBalance({ version, locale: 'ru-RU', timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60 }))
+        cache.pending = Promise.resolve(account.getBalance({ version, locale: 'ru-RU', timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60 }))
           .then((value) => {
             const validAmount = (item, kind) => item && (item.currency === 'USD' || item.currency === 'CNY')
               && typeof item.balance === 'string' && /^-?\d{1,18}(?:\.\d{1,12})?$/.test(item.balance)
@@ -198,11 +199,11 @@ export function createRuntime(ctx, options = {}) {
               ...(Array.isArray(value.value) ? value.value.map((item) => validAmount(item, 'wallet')) : []),
               ...(Array.isArray(value.bonusWallets) ? value.bonusWallets.map((item) => validAmount(item, 'bonus')) : []),
             ].filter(Boolean) : []
-            accountBalanceCache.value = amounts.length ? { amounts } : null
-            accountBalanceCache.at = Date.now()
-            return accountBalanceCache.value
-          }).catch(() => null).finally(() => { accountBalanceCache.pending = null })
-        return accountBalanceCache.pending
+            cache.value = amounts.length ? { amounts } : null
+            cache.at = Date.now()
+            return cache.value
+          }).catch(() => null).finally(() => { cache.pending = null })
+        return cache.pending
       }
     }
     if (account && typeof account.getBalance === 'function' && !catalog.some((item) => item.id === 'deepseek-account')) catalog.push({ id: 'deepseek-account', name: 'DeepSeek Account' })
@@ -315,6 +316,18 @@ export function createRuntime(ctx, options = {}) {
   ctx.on?.('session/event', onSessionEvent)
   ctx.on?.('session/disposed', onDisposed)
   ctx.on?.('agent/status', render)
+  ctx.on?.('credentials/record-updated', (key) => {
+    if (closed || key !== 'deepseek-account-platform/default') return
+    accountBalanceCache = { at: 0, value: null, pending: null }
+    limitsGeneration += 1
+    if (settings.ShowLimits) void refreshLimits()
+  })
+  ctx.on?.('credentials/reference-updated', () => {
+    if (closed) return
+    providerUsageCache.clear()
+    limitsGeneration += 1
+    if (settings.ShowLimits) void refreshLimits()
+  })
   timer = setInterval(render, 1500)
   limitsTimer = setInterval(() => { void refreshLimits() }, 60000)
   render()

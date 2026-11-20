@@ -153,6 +153,13 @@ internal sealed class ItemScrollList : Panel
         return item.Height + item.Margin.Vertical;
     }
 
+    internal int ContentHeight { get { return Padding.Vertical + Controls.Cast<Control>().Sum(item => ItemHeight(item)); } }
+
+    internal int TallestItemHeight
+    {
+        get { return Controls.Count == 0 ? 0 : Controls.Cast<Control>().Max(item => ItemHeight(item)); }
+    }
+
     internal void ScrollWheel(int delta)
     {
         wheelDelta += delta;
@@ -258,6 +265,7 @@ internal sealed class ItemScrollList : Panel
 
 internal sealed class StatusGlyph : Control
 {
+    internal const int GlyphSize = 16;
     private readonly string status;
 
     public StatusGlyph(string value)
@@ -269,8 +277,6 @@ internal sealed class StatusGlyph : Control
     protected override void OnPaint(PaintEventArgs args)
     {
         var graphics = args.Graphics;
-        float sx = Width / 16F, sy = Height / 16F;
-        graphics.ScaleTransform(sx, sy);
         graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         Color color = Graphite.Accent(status);
         using (Pen pen = new Pen(color, 1.6F))
@@ -385,7 +391,11 @@ public sealed class CompactWidgetControl : Control
         {
             graphics.DrawRectangle(border, rectangle);
         }
-        DrawIcon(graphics, new Rectangle(rectangle.Left + 5, rectangle.Top + 6, 12, 12), kind, accent);
+        var saved = graphics.Save();
+        graphics.ScaleTransform(1F / scale, 1F / scale);
+        DrawIcon(graphics, new Rectangle((int)Math.Round((rectangle.Left + 5) * scale),
+            (int)Math.Round((rectangle.Top + 6) * scale), 12, 12), kind, accent);
+        graphics.Restore(saved);
         DrawText(graphics, Convert.ToString(value), new Rectangle(rectangle.Left + 21, rectangle.Top + 4, rectangle.Width - 24, 20), 14F, Graphite.Primary);
         DrawText(graphics, label, new Rectangle(rectangle.Left + 5, rectangle.Top + 25, rectangle.Width - 8, 14), 7F, Graphite.Secondary);
     }

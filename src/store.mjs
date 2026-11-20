@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   WidgetTopMost: false,
   CompactWorkspaceList: false,
   InlineTaskTime: false,
+  Theme: 'system',
   ThemeDark: true,
   ShowLimits: false,
   HiddenLimitProviders: [],
@@ -43,6 +44,7 @@ const NUMBER_KEYS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT
 const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 const SOUND_PRESETS = new Set(['icq', 'boing', 'squeak', 'whistle', 'pop', 'scratch'])
 const WIDGET_SCALES = new Set(['small', 'medium', 'large'])
+const THEME_MODES = new Set(['system', 'light', 'dark'])
 
 export function normalizeSettings(value) {
   const input = value && typeof value === 'object' ? value : {}
@@ -51,6 +53,10 @@ export function normalizeSettings(value) {
   for (const key of NUMBER_KEYS) if (Number.isInteger(input[key])) settings[key] = input[key]
   if (SOUND_PRESETS.has(input.NotificationSoundPreset)) settings.NotificationSoundPreset = input.NotificationSoundPreset
   if (WIDGET_SCALES.has(input.WidgetScale)) settings.WidgetScale = input.WidgetScale
+  if (THEME_MODES.has(input.Theme)) settings.Theme = input.Theme
+  else if (typeof input.ThemeDark === 'boolean') settings.Theme = input.ThemeDark ? 'dark' : 'light'
+  if (settings.Theme === 'light') settings.ThemeDark = false
+  if (settings.Theme === 'dark') settings.ThemeDark = true
   if (Array.isArray(input.HiddenLimitProviders)) {
     settings.HiddenLimitProviders = [...new Set(input.HiddenLimitProviders
       .filter((id) => typeof id === 'string' && PROVIDER_ID.test(id)))].slice(0, 32)

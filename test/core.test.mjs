@@ -26,6 +26,15 @@ test('widget scale and topmost settings have safe defaults and persist valid val
   assert.equal(normalizeSettings({ WidgetScale: 'invalid' }).WidgetScale, 'medium')
 })
 
+test('theme mode preserves explicit legacy choice and accepts the Windows setting', () => {
+  assert.equal(DEFAULT_SETTINGS.Theme, 'system')
+  assert.equal(normalizeSettings({ Theme: 'system' }).Theme, 'system')
+  assert.equal(normalizeSettings({ Theme: 'light' }).ThemeDark, false)
+  assert.equal(normalizeSettings({ Theme: 'dark' }).ThemeDark, true)
+  assert.equal(normalizeSettings({ ThemeDark: false }).Theme, 'light')
+  assert.equal(normalizeSettings({ Theme: 'unknown', ThemeDark: false }).Theme, 'light')
+})
+
 test('notifies exactly once for an active baseline and ignores closed history', () => {
   const active = new Tracker({ turnBoundaryOf: () => ({ lastTurn: 7, openTurnStartSeq: 4 }) })
   active.observe({ id: 'active', header: {} })
