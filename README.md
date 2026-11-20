@@ -48,6 +48,12 @@
 
 [Мелкая сводка](docs/screenshots/widget-summary-small-dark.png) · [Средняя сводка](docs/screenshots/widget-summary-dark.png) · [Крупная сводка](docs/screenshots/widget-summary-large-dark.png) · [Настройки в светлой теме](docs/screenshots/settings-size-light.png) · [Настройки в тёмной теме](docs/screenshots/settings-general-dark.png)
 
+### Современный интерфейс
+
+Откройте «Общие → Интерфейс» и выберите «Современный». Настройки, виджет задач и уведомления остаются самостоятельными окнами. Режим «Классика» сохраняет прежнее оформление. Тему и масштаб можно менять в обоих режимах. В современном режиме окна используют собственные заголовки и кнопки закрытия.
+
+[Настройки в светлой теме](docs/screenshots/fluent-settings-medium-light.png) · [Настройки в тёмной теме](docs/screenshots/fluent-settings-medium-dark.png) · [Виджет](docs/screenshots/fluent-widget-medium-light.png) · [Уведомления](docs/screenshots/fluent-notifications-medium-light.png). На снимках вымышленные данные.
+
 ## Лимиты ИИ
 
 Для Codex виджет использует подключение Codex Connect. Если подключение передаёт кредиты или доступный остаток по индивидуальному ограничению расходов, они появляются отдельной строкой. DeepSeek Account может показать баланс кошелька в валюте через подключённый аккаунт. Отдельная строка DeepSeek показывает доступный баланс API-аккаунта в USD или CNY. Z.ai Coding показывает остаток по тем окнам Coding Plan, которые вернул глобальный сервис Z.ai, и время сброса, когда оно известно.

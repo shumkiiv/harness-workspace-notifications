@@ -18,6 +18,10 @@ internal static class WidgetQuotaKeys
     private const int MaximumResponseBytes = 65536;
     private const int MaximumItems = 32;
     private const string TargetPrefix = "HarnessWidget/quota/";
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+    [DllImport("user32.dll", EntryPoint = "SendMessageW", ExactSpelling = true)]
+    private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
 
     static WidgetQuotaKeys()
     {
@@ -67,18 +71,20 @@ internal static class WidgetQuotaKeys
         {
             form.Text = "Ключ для лимитов";
             form.Icon = TaskIcon.Window;
-            form.FormBorderStyle = FormBorderStyle.FixedDialog;
+            form.FormBorderStyle = ModernTheme.Enabled ? FormBorderStyle.None : FormBorderStyle.FixedDialog;
             form.MaximizeBox = false;
             form.MinimizeBox = false;
             form.StartPosition = FormStartPosition.CenterParent;
-            form.ClientSize = new System.Drawing.Size(390, 178);
-            form.BackColor = Graphite.Base;
-            form.ForeColor = Graphite.Primary;
-            Label name = new Label { Text = title, AutoSize = true, Left = 14, Top = 14, Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold), ForeColor = Graphite.Primary, BackColor = Graphite.Base };
-            Label help = new Label { Text = "Ключ используется только для лимитов и хранится в Windows.", Left = 14, Top = 40, Width = 362, Height = 30, ForeColor = Graphite.Secondary, BackColor = Graphite.Base };
-            Label status = new Label { Left = 14, Top = 74, Width = 362, Height = 18, ForeColor = Graphite.Secondary, BackColor = Graphite.Base };
-            TextBox input = new TextBox { Left = 14, Top = 98, Width = 362, UseSystemPasswordChar = true, MaxLength = 512, AccessibleName = "Ключ " + title, BackColor = Graphite.Card, ForeColor = Graphite.Primary };
+            form.ClientSize = new System.Drawing.Size(390, ModernTheme.Enabled ? 202 : 178);
+            form.BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base;
+            form.ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary;
+            int top = ModernTheme.Enabled ? 38 : 14;
+            Label name = new Label { Text = title, AutoSize = true, Left = 14, Top = top, Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold), ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary, BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base };
+            Label help = new Label { Text = "Ключ используется только для лимитов и хранится в Windows.", Left = 14, Top = top + 26, Width = 362, Height = 30, ForeColor = ModernTheme.Enabled ? ModernTheme.TextSecondary : Graphite.Secondary, BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base };
+            Label status = new Label { Left = 14, Top = top + 60, Width = 362, Height = 18, ForeColor = ModernTheme.Enabled ? ModernTheme.TextSecondary : Graphite.Secondary, BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base };
+            TextBox input = new TextBox { Left = 14, Top = top + 84, Width = 362, UseSystemPasswordChar = true, MaxLength = 512, AccessibleName = "Ключ " + title, BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card, ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary };
             Button save = Button("Сохранить", 14, 362, "Сохранить ключ " + title);
+            if (ModernTheme.Enabled) save.Top = top + 122;
             bool stored = false;
             int error = 0;
             if (allowVault) stored = HasKey(provider, out error);
@@ -97,6 +103,20 @@ internal static class WidgetQuotaKeys
                 form.DialogResult = DialogResult.OK;
             };
             form.Controls.Add(name); form.Controls.Add(help); form.Controls.Add(status); form.Controls.Add(input); form.Controls.Add(save);
+            if (ModernTheme.Enabled)
+            {
+                Label caption = new Label { Text = "Ключ для лимитов", Left = 14, Top = 10, Width = 300, Height = 20, ForeColor = ModernTheme.TextPrimary, BackColor = ModernTheme.Surface };
+                Button close = new Button { Text = "×", AccessibleName = "Закрыть ключ лимитов", Left = 350, Top = 5, Width = 28, Height = 24, FlatStyle = FlatStyle.Flat, BackColor = ModernTheme.Card, ForeColor = ModernTheme.TextPrimary };
+                close.Click += delegate { form.Close(); };
+                MouseEventHandler drag = delegate(object sender, MouseEventArgs args)
+                {
+                    if (args.Button != MouseButtons.Left) return;
+                    ReleaseCapture();
+                    SendMessage(form.Handle, 0x00A1, new IntPtr(2), IntPtr.Zero);
+                };
+                caption.MouseDown += drag;
+                form.Controls.Add(caption); form.Controls.Add(close);
+            }
             form.FormClosed += delegate { input.Clear(); };
             form.ShowDialog();
         }

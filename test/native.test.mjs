@@ -20,4 +20,7 @@ test('native helper self-test reports every named check', () => {
   assert.equal(report.checks.settingsPagingKeepsLimitRowsReachable, true)
   assert.equal(report.checks.settingsFitsWorkingAreaAtAllScales, true)
   assert.equal(report.checks.settingsThemesKeepLayoutStable, true)
+  assert.equal(report.checks.interfaceStyleDefaultsClassic, true)
+  assert.equal(report.checks.interfaceStyleModern, true)
+  assert.equal(report.checks.interfaceStyleReturnsClassic, true)
 })

@@ -117,6 +117,8 @@ public class Settings
     public bool InlineTaskTime { get; set; }
     public string Theme { get; set; }
     public bool ThemeDark { get; set; }
+    public string InterfaceStyle { get; set; }
+    public string NormalizedInterfaceStyle { get { return InterfaceStyle == "modern" ? "modern" : "classic"; } }
     public bool ShowLimits { get; set; }
     public List<string> HiddenLimitProviders { get; set; }
     public int WidgetX { get; set; }
@@ -152,6 +154,7 @@ public class Settings
         InlineTaskTime = false;
         Theme = "system";
         ThemeDark = true;
+        InterfaceStyle = "classic";
         ShowLimits = false;
         HiddenLimitProviders = new List<string>();
     }
@@ -219,11 +222,16 @@ public sealed class SettingsForm : Form
     private readonly ComboBox soundPreset = new SettingsChoice();
     private readonly ComboBox widgetScale = new SettingsChoice();
     private readonly ComboBox themeMode = new SettingsChoice();
+    private readonly ComboBox interfaceStyle = new SettingsChoice();
     private readonly List<Button> tabButtons = new List<Button>();
     private readonly Action<string> quotaKeyChanged;
     private readonly bool allowQuotaVault;
     private readonly Rectangle? layoutWorkingArea;
     private Panel contentPanel;
+    private Panel navPanel;
+    private Panel titleBar;
+    private Label modernPageTitle;
+    private Button closeButton;
     private bool syncing;
     private bool fittingContent;
     private int page;
@@ -247,18 +255,19 @@ public sealed class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.None;
         SuspendLayout();
         ClientSize = new Size(398, 329);
-        BackColor = Graphite.Base;
-        ForeColor = Graphite.Primary;
+        ModernTheme.Apply(value.NormalizedInterfaceStyle == "modern", Graphite.IsDark);
+        BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base;
+        ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary;
         KeyPreview = true;
         ShowInTaskbar = false;
         KeyDown += delegate(object sender, KeyEventArgs args) { if (args.KeyCode == Keys.Escape) Close(); };
         Shown += delegate { FitToVisibleContent(); };
-        Panel titleBar = new Panel();
-        titleBar.BackColor = Graphite.Card; titleBar.SetBounds(0, 0, 398, 32);
+        titleBar = new Panel();
+        titleBar.BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card; titleBar.SetBounds(0, 0, 398, 32);
         titleBar.MouseDown += DragCaption;
         Label title = new Label(); title.Text = "☷  Настройки"; title.ForeColor = Graphite.Primary; title.AutoSize = true; title.Location = new Point(10, 8); title.MouseDown += DragCaption;
         titleBar.Controls.Add(title); Controls.Add(titleBar);
-        Panel tabs = new Panel(); tabs.BackColor = Graphite.Base; tabs.SetBounds(8, 36, SettingsContentWidth, 28); tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        navPanel = new Panel(); navPanel.BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base; navPanel.SetBounds(8, 36, SettingsContentWidth, 28); navPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         string[] tabNames = new string[] { "Общие", "Карточки", "Состояния", "Лимиты" };
         for (int tabIndex = 0; tabIndex < tabNames.Length; tabIndex++)
         {
@@ -266,10 +275,12 @@ public sealed class SettingsForm : Form
             tab.Text = tabNames[tabIndex]; tab.AccessibleName = tabNames[tabIndex]; tab.SetBounds(tabIndex * 96, 1, 92, 25);
             tab.FlatStyle = FlatStyle.Flat;
             tab.Click += delegate { ShowPage(selected); };
-            tabs.Controls.Add(tab);
+            navPanel.Controls.Add(tab);
             tabButtons.Add(tab);
         }
-        Controls.Add(tabs);
+        Controls.Add(navPanel);
+        modernPageTitle = new Label { Text = "Общие", Visible = false, Font = new Font("Segoe UI", 11F, FontStyle.Bold), AutoEllipsis = true };
+        Controls.Add(modernPageTitle);
         int top = 72;
         page = 0;
         AddCaption("Виджет", ref top);
@@ -284,6 +295,9 @@ public sealed class SettingsForm : Form
         themeMode.Items.AddRange(new object[] { "Как в Windows", "Светлая", "Тёмная" });
         themeMode.SelectedIndex = ThemeIndex(value.Theme);
         AddGeneralChoice(themeMode, "theme-mode", "Тема", ref top);
+        interfaceStyle.Items.AddRange(new object[] { "Классика", "Современный" });
+        interfaceStyle.SelectedIndex = value.NormalizedInterfaceStyle == "modern" ? 1 : 0;
+        AddGeneralChoice(interfaceStyle, "interface-style", "Интерфейс", ref top);
         AddCaption("Уведомления", ref top);
         Add("show-notices", "Показывать уведомления", value.ShowNotifications, ref top, GeneralRowHeight);
         Add("subagent-notices", "Уведомления субагентов", value.SubagentNotices, ref top, GeneralRowHeight);
@@ -334,19 +348,19 @@ public sealed class SettingsForm : Form
         SaveButton.ForeColor = Graphite.Primary;
         SaveButton.Click += delegate { Close(); };
         Controls.Add(SaveButton);
-        Button close = new Button();
-        close.Text = "×";
-        close.AccessibleName = "Закрыть настройки";
-        close.FlatStyle = FlatStyle.Flat;
-        close.FlatAppearance.BorderColor = Graphite.Border;
-        close.BackColor = Graphite.Card;
-        close.ForeColor = Graphite.Primary;
-        close.Size = new Size(28, 24);
-        close.Left = 362;
-        close.Top = 6;
-        close.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        close.Click += delegate { Close(); };
-        titleBar.Controls.Add(close);
+        closeButton = new Button();
+        closeButton.Text = "×";
+        closeButton.AccessibleName = "Закрыть настройки";
+        closeButton.FlatStyle = FlatStyle.Flat;
+        closeButton.FlatAppearance.BorderColor = Graphite.Border;
+        closeButton.BackColor = Graphite.Card;
+        closeButton.ForeColor = Graphite.Primary;
+        closeButton.Size = new Size(28, 24);
+        closeButton.Left = 362;
+        closeButton.Top = 6;
+        closeButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        closeButton.Click += delegate { Close(); };
+        titleBar.Controls.Add(closeButton);
         titleBar.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         MinimumSize = new Size(360, 280);
         AutoScroll = false;
@@ -354,7 +368,8 @@ public sealed class SettingsForm : Form
         contentPanel.SetBounds(8, 64, SettingsContentWidth, 218);
         contentPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         contentPanel.AutoScroll = false;
-        contentPanel.BackColor = Graphite.Card;
+        contentPanel.BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card;
+        contentPanel.Paint += PaintModernCards;
         foreach (Control control in new List<Control>(pages.Keys))
         {
             control.Top = Math.Max(8, control.Top - 64);
@@ -371,6 +386,7 @@ public sealed class SettingsForm : Form
         StyleTabs();
         CaptureScaleBaseline(this);
         ApplyWindowScale();
+        ApplyInterfaceStyleRebuild();
     }
 
     public CheckBox Check(string key)
@@ -436,30 +452,30 @@ public sealed class SettingsForm : Form
     {
         syncing = true;
         themeMode.SelectedIndex = ThemeIndex(value.Theme);
+        interfaceStyle.SelectedIndex = value.NormalizedInterfaceStyle == "modern" ? 1 : 0;
         checks["show-limits"].Checked = value.ShowLimits;
         checks["compact-widget"].Checked = value.CompactWidget;
         syncing = false;
-        ApplyOwnPalette(this);
-        StyleTabs();
+        ApplyInterfaceStyleRebuild();
         ApplyWindowScale();
     }
 
     private static void ApplyOwnPalette(Control control)
     {
         Panel panel = control as Panel;
-        if (panel != null) panel.BackColor = Graphite.Card;
+        if (panel != null) panel.BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card;
         Label label = control as Label;
         if (label != null)
         {
-            label.BackColor = Graphite.Card;
-            label.ForeColor = label.Name == "settings-section" ? Graphite.Accent("running") : Graphite.Primary;
+            label.BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card;
+            label.ForeColor = label.Name == "settings-section" ? (ModernTheme.Enabled ? ModernTheme.Accent : Graphite.Accent("running")) : (ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary);
         }
         Button button = control as Button;
-        if (button != null) { button.BackColor = Graphite.Card; button.ForeColor = Graphite.Primary; button.FlatAppearance.BorderColor = Graphite.Border; }
+        if (button != null) { button.BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card; button.ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary; button.FlatAppearance.BorderColor = ModernTheme.Enabled ? ModernTheme.CardBorder : Graphite.Border; }
         CheckBox check = control as CheckBox;
-        if (check != null) { check.BackColor = Graphite.Card; check.ForeColor = Graphite.Primary; }
+        if (check != null) { check.BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card; check.ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary; }
         ComboBox combo = control as ComboBox;
-        if (combo != null) { combo.BackColor = Graphite.Card; combo.ForeColor = Graphite.Primary; }
+        if (combo != null) { combo.BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card; combo.ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary; }
         foreach (Control child in control.Controls) ApplyOwnPalette(child);
     }
 
@@ -496,12 +512,15 @@ public sealed class SettingsForm : Form
 
     private void Add(string key, string text, bool selected, ref int top, int rowHeight = RowHeight)
     {
-        CheckBox check = new CheckBox();
+        CheckBox check = new ModernToggle();
         check.Text = text;
         check.Checked = selected;
         check.SetBounds(RowInset, top, 1, rowHeight);
         check.TextAlign = ContentAlignment.MiddleLeft;
         check.CheckAlign = ContentAlignment.MiddleRight;
+        if (key == "show-widget") check.AccessibleDescription = "Показывает список задач рядом с рабочим столом";
+        if (key == "show-notices") check.AccessibleDescription = "Показывает уведомления о задачах";
+        if (key == "widget-topmost") check.AccessibleDescription = "Удерживает виджет поверх других окон";
         check.FlatStyle = FlatStyle.Flat;
         check.ForeColor = Graphite.Primary;
         check.BackColor = Graphite.Base;
@@ -517,9 +536,11 @@ public sealed class SettingsForm : Form
 
     private void AddCaption(string text, ref int top)
     {
-        Label caption = new Label();
+        ModernSectionLabel caption = new ModernSectionLabel();
         caption.Name = "settings-section";
         caption.Text = text;
+        caption.HelpText = text == "Виджет" ? "Показывает задачи рядом с рабочим столом"
+            : (text == "Уведомления" ? "Сообщает о важных изменениях задач" : "Настройка выбранного раздела");
         caption.TextAlign = ContentAlignment.MiddleLeft;
         caption.ForeColor = Graphite.Accent("running");
         caption.Font = new Font("Segoe UI", 8.25F, FontStyle.Bold);
@@ -575,9 +596,9 @@ public sealed class SettingsForm : Form
             && item.Key != nextLimitPage && item.Key != limitPageCaption).Select(item => item.Key).ToList();
         List<List<Control>> rows = new List<List<Control>>();
         int bandBottom = Int32.MinValue;
-        foreach (Control control in controls.OrderBy(control => ScaleRectangle(scaleBounds[control], factor).Top))
+        foreach (Control control in controls.OrderBy(control => BaseBounds(control, factor).Top))
         {
-            Rectangle bounds = ScaleRectangle(scaleBounds[control], factor);
+            Rectangle bounds = BaseBounds(control, factor);
             if (rows.Count == 0 || bounds.Top >= bandBottom)
             {
                 rows.Add(new List<Control>());
@@ -596,15 +617,18 @@ public sealed class SettingsForm : Form
         int used = 0;
         foreach (List<Control> row in rows)
         {
-            int rowHeight = row.Select(control => ScaleRectangle(scaleBounds[control], factor).Height).Max();
-            if (currentPage.Count > 0 && used + rowHeight > usableHeight)
+            int rowHeight = row.Select(control => MeasuredBounds(control, factor).Height).Max();
+            int sectionGap = ModernTheme.Enabled && currentPage.Count > 0 && row.Any(control => control.Name == "settings-section")
+                ? Math.Max(6, (int)Math.Round(12 * factor)) : 0;
+            if (currentPage.Count > 0 && used + sectionGap + rowHeight > usableHeight)
             {
                 contentPages.Add(currentPage);
                 currentPage = new List<List<Control>>();
                 used = 0;
+                sectionGap = 0;
             }
             currentPage.Add(row);
-            used += rowHeight;
+            used += sectionGap + rowHeight;
         }
         if (currentPage.Count > 0) contentPages.Add(currentPage);
         if (contentPages.Count == 0) contentPages.Add(new List<List<Control>>());
@@ -613,15 +637,18 @@ public sealed class SettingsForm : Form
         int top = margin;
         foreach (List<Control> row in contentPages[limitProviderPage])
         {
-            int sourceTop = row.Select(control => ScaleRectangle(scaleBounds[control], factor).Top).Min();
-            int rowHeight = row.Select(control => ScaleRectangle(scaleBounds[control], factor).Height).Max();
+            if (ModernTheme.Enabled && top > margin && row.Any(control => control.Name == "settings-section"))
+                top += Math.Max(6, (int)Math.Round(12 * factor));
+            int sourceTop = row.Select(control => BaseBounds(control, factor).Top).Min();
+            int rowHeight = row.Select(control => MeasuredBounds(control, factor).Height).Max();
             foreach (Control control in row)
             {
-                Rectangle source = ScaleRectangle(scaleBounds[control], factor);
-                control.SetBounds(source.Left, top + source.Top - sourceTop, source.Width, source.Height);
+                Rectangle source = MeasuredBounds(control, factor);
+                Rectangle baseBounds = BaseBounds(control, factor);
+                control.SetBounds(source.Left, top + baseBounds.Top - sourceTop, source.Width, source.Height);
                 control.Visible = true;
             }
-            top += rowHeight;
+            top += rowHeight + (ModernTheme.Enabled && row.Any(control => control.Name == "settings-section") ? Math.Max(3, (int)Math.Round(4 * factor)) : 0);
         }
         if (contentPages.Count > 1)
         {
@@ -641,7 +668,8 @@ public sealed class SettingsForm : Form
         int contentHeight = Math.Min(availableContentHeight, Math.Max(1, top + margin));
         Rectangle workingArea = WorkingArea();
         MinimumSize = new Size(Math.Min(Math.Max(1, (int)Math.Round(360 * factor)), workingArea.Width), Math.Min(Math.Max(1, (int)Math.Round(280 * factor)), maximumHeight));
-        int width = Math.Min(Math.Max(1, (int)Math.Round(scaleBounds[this].Width * factor)), workingArea.Width);
+        int logicalWidth = ModernTheme.Enabled ? 550 : scaleBounds[this].Width;
+        int width = Math.Min(Math.Max(1, (int)Math.Round(logicalWidth * factor)), workingArea.Width);
         int height = Math.Min(maximumHeight, contentPanel.Top + contentHeight + footerGap + SaveButton.Height + bottomMargin);
         if (ClientSize.Width != width || ClientSize.Height != height) ClientSize = new Size(width, height);
         if (Visible) Location = Geometry.ClampToVisible(Bounds, workingArea).Location;
@@ -672,9 +700,25 @@ public sealed class SettingsForm : Form
     {
         if (page != selected) limitProviderPage = 0;
         page = selected;
+        if (modernPageTitle != null && selected >= 0 && selected < tabButtons.Count) modernPageTitle.Text = tabButtons[selected].Text;
         StyleTabs();
         foreach (KeyValuePair<Control, int> item in pages) item.Key.Visible = item.Value == selected;
         FitToVisibleContent();
+        EnsureVisibleControlsFit();
+    }
+
+    private void EnsureVisibleControlsFit()
+    {
+        foreach (Control control in contentPanel.Controls)
+        {
+            if (!control.Visible) continue;
+            int width = Math.Min(control.Width, contentPanel.ClientSize.Width);
+            int height = Math.Min(control.Height, contentPanel.ClientSize.Height);
+            int left = Math.Max(0, Math.Min(control.Left, Math.Max(0, contentPanel.ClientSize.Width - width)));
+            int top = Math.Max(0, Math.Min(control.Top, Math.Max(0, contentPanel.ClientSize.Height - height)));
+            if (left != control.Left || top != control.Top || width != control.Width || height != control.Height)
+                control.Bounds = new Rectangle(left, top, width, height);
+        }
     }
 
     private void StyleTabs()
@@ -683,9 +727,9 @@ public sealed class SettingsForm : Form
         {
             bool selected = index == page;
             Button tab = tabButtons[index];
-            tab.BackColor = selected ? Graphite.ChipFill("running") : Graphite.Card;
-            tab.ForeColor = selected ? Graphite.Accent("running") : Graphite.Primary;
-            tab.FlatAppearance.BorderColor = selected ? Graphite.Accent("running") : Graphite.Border;
+            tab.BackColor = selected ? (ModernTheme.Enabled ? ModernTheme.AccentSoft : Graphite.ChipFill("running")) : (ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card);
+            tab.ForeColor = selected ? (ModernTheme.Enabled ? ModernTheme.Accent : Graphite.Accent("running")) : (ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary);
+            tab.FlatAppearance.BorderColor = selected ? (ModernTheme.Enabled ? ModernTheme.Accent : Graphite.Accent("running")) : (ModernTheme.Enabled ? ModernTheme.CardBorder : Graphite.Border);
         }
     }
 
@@ -717,6 +761,7 @@ public sealed class SettingsForm : Form
         value.Theme = ThemeMode();
         if (value.Theme == "light") value.ThemeDark = false;
         if (value.Theme == "dark") value.ThemeDark = true;
+        value.InterfaceStyle = interfaceStyle.SelectedIndex == 1 ? "modern" : "classic";
         value.ShowLimits = checks["show-limits"].Checked;
         value.HiddenLimitProviders = value.HiddenLimitProviders.Where(id => !checks.ContainsKey("limit-" + id))
             .Concat(checks.Where(item => item.Key.StartsWith("limit-", StringComparison.Ordinal) && !item.Value.Checked)
@@ -732,7 +777,81 @@ public sealed class SettingsForm : Form
         value.StatusUnknown = checks["status-unknown"].Checked;
         value.StatusDisposed = checks["status-disposed"].Checked;
         changed(value);
+        ApplyInterfaceStyleRebuild();
         ApplyWindowScale();
+    }
+
+    public void ApplyInterfaceStyleRebuild()
+    {
+        ModernTheme.Apply(value.NormalizedInterfaceStyle == "modern", Graphite.IsDark);
+        ApplyInterfaceStyleGeometry(WindowScaleFactor());
+        BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base;
+        ApplyOwnPalette(this);
+        StyleTabs();
+        EnsureVisibleControlsFit();
+        Invalidate(true);
+    }
+
+    private void ApplyInterfaceStyleGeometry(float factor)
+    {
+        bool modern = ModernTheme.Enabled;
+        int shift = modern ? (int)Math.Round(152 * factor) : 0;
+        int logicalWidth = (int)Math.Round((modern ? 550 : 398) * factor);
+        Rectangle area = WorkingArea();
+        ClientSize = new Size(Math.Min(area.Width, Math.Max(1, logicalWidth)), ClientSize.Height);
+        titleBar.Width = ClientSize.Width;
+        closeButton.Left = Math.Max(0, ClientSize.Width - closeButton.Width - (int)Math.Round(8 * factor));
+        SaveButton.Left = Math.Max(0, ClientSize.Width - SaveButton.Width - (int)Math.Round(18 * factor));
+        if (modern)
+        {
+            navPanel.SetBounds((int)Math.Round(12 * factor), (int)Math.Round(52 * factor), (int)Math.Round(142 * factor), Math.Max(1, ClientSize.Height - (int)Math.Round(64 * factor)));
+            navPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
+            for (int index = 0; index < tabButtons.Count; index++)
+                tabButtons[index].SetBounds(0, (int)Math.Round(index * 34 * factor), navPanel.Width, Math.Max(22, (int)Math.Round(30 * factor)));
+            modernPageTitle.Visible = true;
+            modernPageTitle.ForeColor = ModernTheme.TextPrimary;
+            modernPageTitle.BackColor = ModernTheme.Surface;
+            modernPageTitle.SetBounds(shift + (int)Math.Round(12 * factor), (int)Math.Round(46 * factor), Math.Max(1, ClientSize.Width - shift - (int)Math.Round(24 * factor)), (int)Math.Round(24 * factor));
+            contentPanel.Left = shift + (int)Math.Round(8 * factor);
+            contentPanel.Top = (int)Math.Round(76 * factor);
+            contentPanel.Width = Math.Max(1, ClientSize.Width - contentPanel.Left - (int)Math.Round(8 * factor));
+        }
+        else
+        {
+            navPanel.SetBounds((int)Math.Round(8 * factor), (int)Math.Round(36 * factor), Math.Min(ClientSize.Width - (int)Math.Round(16 * factor), (int)Math.Round(SettingsContentWidth * factor)), (int)Math.Round(28 * factor));
+            navPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            for (int index = 0; index < tabButtons.Count; index++)
+                tabButtons[index].SetBounds((int)Math.Round(index * 96 * factor), (int)Math.Round(factor), (int)Math.Round(92 * factor), Math.Max(1, (int)Math.Round(25 * factor)));
+            modernPageTitle.Visible = false;
+            contentPanel.Left = (int)Math.Round(8 * factor);
+            contentPanel.Top = (int)Math.Round(64 * factor);
+            contentPanel.Width = Math.Min(ClientSize.Width - (int)Math.Round(16 * factor), (int)Math.Round(SettingsContentWidth * factor));
+        }
+        contentPanel.Invalidate();
+        if (!fittingContent) FitToVisibleContent();
+    }
+
+    private void PaintModernCards(object sender, PaintEventArgs args)
+    {
+        if (!ModernTheme.Enabled) return;
+        List<Control> visible = pages.Where(item => item.Value == page && item.Key.Visible).Select(item => item.Key).ToList();
+        if (visible.Count == 0) return;
+        List<Label> sections = visible.OfType<Label>().Where(label => label.Name == "settings-section").OrderBy(label => label.Top).ToList();
+        if (sections.Count == 0)
+        {
+            int top = Math.Max(2, visible.Min(control => control.Top) - 4);
+            int bottom = Math.Min(contentPanel.ClientSize.Height - 2, visible.Max(control => control.Bottom) + 4);
+            ModernTheme.PaintCard(args.Graphics, new Rectangle(2, top, Math.Max(1, contentPanel.ClientSize.Width - 4), Math.Max(1, bottom - top)));
+            return;
+        }
+        for (int index = 0; index < sections.Count; index++)
+        {
+            Label section = sections[index];
+            int next = index + 1 < sections.Count ? sections[index + 1].Top - 7 : contentPanel.ClientSize.Height - 3;
+            List<Control> group = visible.Where(control => control.Top >= section.Top && control.Top < next).ToList();
+            int bottom = group.Count == 0 ? section.Bottom + 3 : Math.Min(next - 3, group.Max(control => control.Bottom) + 3);
+            ModernTheme.PaintCard(args.Graphics, new Rectangle(2, Math.Max(2, section.Top - 4), Math.Max(1, contentPanel.ClientSize.Width - 4), Math.Max(1, bottom - section.Top + 4)));
+        }
     }
 
     private readonly Dictionary<Control, Rectangle> scaleBounds = new Dictionary<Control, Rectangle>();
@@ -747,7 +866,8 @@ public sealed class SettingsForm : Form
     private float WindowScaleFactor()
     {
         float requested = value.WidgetScale == "small" ? .85F : (value.WidgetScale == "large" ? 1.25F : 1F);
-        return Math.Min(requested, Math.Max(.5F, (float)WorkingArea().Width / 398F));
+        int width = ModernTheme.Enabled ? 550 : 398;
+        return Math.Min(requested, Math.Max(.5F, (float)WorkingArea().Width / width));
     }
 
     private static Rectangle ScaleRectangle(Rectangle rectangle, float factor)
@@ -756,6 +876,19 @@ public sealed class SettingsForm : Form
         int top = (int)Math.Round(rectangle.Top * factor);
         return new Rectangle(left, top, Math.Max(1, (int)Math.Round(rectangle.Right * factor) - left),
             Math.Max(1, (int)Math.Round(rectangle.Bottom * factor) - top));
+    }
+
+    private Rectangle BaseBounds(Control control, float factor)
+    {
+        return ScaleRectangle(scaleBounds[control], factor);
+    }
+
+    private Rectangle MeasuredBounds(Control control, float factor)
+    {
+        Rectangle bounds = BaseBounds(control, factor);
+        if (ModernTheme.Enabled && control.Name == "settings-section")
+            bounds.Height = Math.Max(bounds.Height, (int)Math.Round(36 * factor));
+        return bounds;
     }
 
     private void ApplyWindowScale()
@@ -782,6 +915,7 @@ public sealed class SettingsForm : Form
                 control.Font = new Font(control.Font.FontFamily, targetSize, control.Font.Style);
         }
         FitToVisibleContent();
+        ApplyInterfaceStyleGeometry(factor);
     }
 
     private static int ControlDepth(Control control)
@@ -958,7 +1092,7 @@ public sealed class LimitsPanel : Control
     protected override void OnPaint(PaintEventArgs eventArgs)
     {
         Graphics graphics = eventArgs.Graphics;
-        graphics.Clear(Graphite.Base);
+        graphics.Clear(ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base);
         using (Font detail = new Font("Segoe UI", 7.5F * zoom, FontStyle.Regular))
         {
             if (providers.Count == 0)
@@ -1326,6 +1460,7 @@ public sealed class DshNotifyGui : Form
     private void ApplyEffectiveTheme()
     {
         Graphite.ApplyTheme(EffectiveThemeDark(Settings));
+        ModernTheme.Apply(Settings != null && Settings.NormalizedInterfaceStyle == "modern", Graphite.IsDark);
         ApplyTheme();
     }
     private int Px(int value) { return (int)Math.Round(value * WidgetScaleFactor); }
@@ -1782,20 +1917,22 @@ public sealed class DshNotifyGui : Form
 
     private void ApplyTheme()
     {
-        BackColor = Graphite.Base;
-        rows.BackColor = Graphite.Base;
-        cards.BackColor = Graphite.Base;
-        compact.BackColor = Graphite.Base;
-        limits.BackColor = Graphite.Base;
-        limitsHost.BackColor = Graphite.Base;
-        resizeGrip.BackColor = Graphite.Base;
+        Color surface = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base;
+        Color card = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card;
+        BackColor = surface;
+        rows.BackColor = surface;
+        cards.BackColor = surface;
+        compact.BackColor = surface;
+        limits.BackColor = surface;
+        limitsHost.BackColor = surface;
+        resizeGrip.BackColor = surface;
         resizeGrip.Invalidate();
-        stack.BackColor = Graphite.Border;
-        headerPanel.BackColor = Graphite.Card;
-        headerTitle.ForeColor = Graphite.Primary;
-        taskGlyph.BackColor = Graphite.Card;
-        noticeHeader.BackColor = Graphite.Base;
-        noticeHeaderTitle.ForeColor = Graphite.Secondary;
+        stack.BackColor = ModernTheme.Enabled ? ModernTheme.CardBorder : Graphite.Border;
+        headerPanel.BackColor = card;
+        headerTitle.ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary;
+        taskGlyph.BackColor = card;
+        noticeHeader.BackColor = surface;
+        noticeHeaderTitle.ForeColor = ModernTheme.Enabled ? ModernTheme.TextSecondary : Graphite.Secondary;
         StyleHeaderButton(noticeHeaderClose);
         foreach (Button button in headerButtons) StyleHeaderButton(button);
         foreach (Form form in settingsForms)
@@ -1987,10 +2124,11 @@ public sealed class DshNotifyGui : Form
         Panel card = new Panel
         {
             Width = 338,
-            BackColor = Graphite.Card,
+            BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card,
             Margin = new Padding(0, 0, 0, 6),
             AccessibleName = "Уведомление о задаче"
         };
+        ApplyModernCardPaint(card);
         Button close = NoticeCloseButton("Закрыть уведомление");
         close.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         close.Location = new Point(card.Width - close.Width - 4, 3);
@@ -2100,6 +2238,14 @@ public sealed class DshNotifyGui : Form
         return button;
     }
 
+    private static void ApplyModernCardPaint(Panel card)
+    {
+        card.Paint += delegate(object sender, PaintEventArgs args)
+        {
+            if (ModernTheme.Enabled) ModernTheme.PaintCard(args.Graphics, new Rectangle(0, 0, card.ClientSize.Width, card.ClientSize.Height));
+        };
+    }
+
     private static void AddNoticeLabel(Panel card, string text, Font font, Color color, int top,
         int width, int height)
     {
@@ -2135,10 +2281,11 @@ public sealed class DshNotifyGui : Form
         Panel card = new Panel
         {
             Width = width,
-            BackColor = Graphite.Card,
+            BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card,
             AccessibleName = "Карточка рабочей области",
             Margin = new Padding(0, 0, 0, 6)
         };
+        ApplyModernCardPaint(card);
         int contentWidth = Math.Max(1, width - Px(24));
         string title = String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace;
         int top = Px(8);
@@ -2171,8 +2318,9 @@ public sealed class DshNotifyGui : Form
 
     private Panel MakeCompactWorkspaceRow(WidgetRow row, int width)
     {
-        Panel item = new Panel { Width = width, Height = Px(26), BackColor = Graphite.Card,
-            AccessibleName = "Рабочая область: " + (String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace), Margin = new Padding(0, 0, 0, Px(2)) };
+        Panel item = new Panel { Width = width, Height = Px(26), BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card,
+            AccessibleName = "Рабочая область: " + (String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace), Margin = new Padding(0, 0, 0, ModernTheme.Enabled ? Px(5) : Px(2)) };
+        ApplyModernCardPaint(item);
         string title = String.IsNullOrEmpty(row.Workspace) ? row.Title : row.Workspace;
         int textLeft = Px(8);
         int statusLeft = Math.Max(textLeft, width - Px(118));
@@ -2668,6 +2816,13 @@ public sealed class DshNotifyGui : Form
         bool explicitLightTheme = settings.Theme == "light" && !settings.ThemeDark;
         themes.SelectedIndex = 0;
         bool systemThemeDoesNotOverwriteLegacy = settings.Theme == "system" && !settings.ThemeDark;
+        IntPtr settingsHandle = form.Handle;
+        ComboBox interfaceStyles = (ComboBox)form.Controls.Find("interface-style", true).Single();
+        bool interfaceStyleDefaultsClassic = interfaceStyles.SelectedIndex == 0 && settings.NormalizedInterfaceStyle == "classic";
+        interfaceStyles.SelectedIndex = 1;
+        bool interfaceStyleModern = settings.NormalizedInterfaceStyle == "modern" && ModernTheme.Enabled && form.Handle == settingsHandle;
+        interfaceStyles.SelectedIndex = 0;
+        bool interfaceStyleReturnsClassic = settings.NormalizedInterfaceStyle == "classic" && !ModernTheme.Enabled && form.Handle == settingsHandle;
         form.Dispose();
         List<Dictionary<string, object>> longProviders = Enumerable.Range(0, 40).Select(index => new Dictionary<string, object>
         {
@@ -2996,7 +3151,8 @@ public sealed class DshNotifyGui : Form
             && new[] { deepSeekBadge, codexBadge, zaiBadge, genericBadge }.Distinct().Count() == 4;
         bool passed = checkbox && position && clamp && settingsRoundTrip && newSettings && iconDrawn
             && taskIconConsistent && providerBadgeAliases && notificationSound && notificationSoundPresets
-            && countdown && taskTitle && moveEmitted && moveStored && noTaskbarButtons;
+            && countdown && taskTitle && moveEmitted && moveStored && noTaskbarButtons
+            && interfaceStyleDefaultsClassic && interfaceStyleModern && interfaceStyleReturnsClassic;
         passed = passed && settingsScaleLarge && settingsScaleSmall && settingsScaleNoDrift && settingsChildrenFit && providerScaleStable
             && explicitLightTheme && systemThemeDoesNotOverwriteLegacy && settingsNoScrollbars && settingsPagingKeepsLimitRowsReachable
             && settingsFitsWorkingAreaAtAllScales && settingsThemesKeepLayoutStable;
@@ -3010,6 +3166,9 @@ public sealed class DshNotifyGui : Form
             + ",\"clamp\":" + JsonBool(clamp)
             + ",\"settingsRoundTrip\":" + JsonBool(settingsRoundTrip)
             + ",\"newSettings\":" + JsonBool(newSettings)
+            + ",\"interfaceStyleDefaultsClassic\":" + JsonBool(interfaceStyleDefaultsClassic)
+            + ",\"interfaceStyleModern\":" + JsonBool(interfaceStyleModern)
+            + ",\"interfaceStyleReturnsClassic\":" + JsonBool(interfaceStyleReturnsClassic)
             + ",\"iconDrawn\":" + JsonBool(iconDrawn)
             + ",\"taskIconConsistent\":" + JsonBool(taskIconConsistent)
             + ",\"providerBadgeAliases\":" + JsonBool(providerBadgeAliases)

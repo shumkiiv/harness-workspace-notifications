@@ -35,6 +35,14 @@ test('theme mode preserves explicit legacy choice and accepts the Windows settin
   assert.equal(normalizeSettings({ Theme: 'unknown', ThemeDark: false }).Theme, 'light')
 })
 
+test('interface style defaults to classic and only accepts the opt-in modern value', () => {
+  assert.equal(DEFAULT_SETTINGS.InterfaceStyle, 'classic')
+  assert.equal(normalizeSettings({}).InterfaceStyle, 'classic')
+  assert.equal(normalizeSettings({ InterfaceStyle: 'unknown' }).InterfaceStyle, 'classic')
+  assert.equal(normalizeSettings({ InterfaceStyle: 'modern' }).InterfaceStyle, 'modern')
+  assert.equal(normalizeSettings({ InterfaceStyle: 'classic' }).InterfaceStyle, 'classic')
+})
+
 test('notifies exactly once for an active baseline and ignores closed history', () => {
   const active = new Tracker({ turnBoundaryOf: () => ({ lastTurn: 7, openTurnStartSeq: 4 }) })
   active.observe({ id: 'active', header: {} })

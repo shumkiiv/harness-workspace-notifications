@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   InlineTaskTime: false,
   Theme: 'system',
   ThemeDark: true,
+  InterfaceStyle: 'classic',
   ShowLimits: false,
   HiddenLimitProviders: [],
   StatusRunning: true,
@@ -45,6 +46,7 @@ const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 const SOUND_PRESETS = new Set(['icq', 'boing', 'squeak', 'whistle', 'pop', 'scratch'])
 const WIDGET_SCALES = new Set(['small', 'medium', 'large'])
 const THEME_MODES = new Set(['system', 'light', 'dark'])
+const INTERFACE_STYLES = new Set(['classic', 'modern'])
 
 export function normalizeSettings(value) {
   const input = value && typeof value === 'object' ? value : {}
@@ -57,6 +59,7 @@ export function normalizeSettings(value) {
   else if (typeof input.ThemeDark === 'boolean') settings.Theme = input.ThemeDark ? 'dark' : 'light'
   if (settings.Theme === 'light') settings.ThemeDark = false
   if (settings.Theme === 'dark') settings.ThemeDark = true
+  if (INTERFACE_STYLES.has(input.InterfaceStyle)) settings.InterfaceStyle = input.InterfaceStyle
   if (Array.isArray(input.HiddenLimitProviders)) {
     settings.HiddenLimitProviders = [...new Set(input.HiddenLimitProviders
       .filter((id) => typeof id === 'string' && PROVIDER_ID.test(id)))].slice(0, 32)

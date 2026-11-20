@@ -318,8 +318,8 @@ public sealed class CompactWidgetControl : Control
     public CompactWidgetControl()
     {
         DoubleBuffered = true;
-        BackColor = Graphite.Base;
-        ForeColor = Graphite.Primary;
+        BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base;
+        ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary;
         MinimumSize = new Size(230, 85);
     }
 
@@ -339,11 +339,18 @@ public sealed class CompactWidgetControl : Control
         logicalWidth = Math.Max(1, (int)Math.Round(ClientSize.Width / scale));
         logicalHeight = Math.Max(1, (int)Math.Round(ClientSize.Height / scale));
         Rectangle bounds = new Rectangle(0, 0, logicalWidth, logicalHeight);
-        using (Brush surface = new SolidBrush(Graphite.Card))
-        using (Pen border = new Pen(Graphite.Border))
+        if (ModernTheme.Enabled)
         {
-            graphics.FillRectangle(surface, bounds);
-            graphics.DrawRectangle(border, 0, 0, Math.Max(0, bounds.Width - 1), Math.Max(0, bounds.Height - 1));
+            ModernTheme.PaintCard(graphics, bounds);
+        }
+        else
+        {
+            using (Brush surface = new SolidBrush(Graphite.Card))
+            using (Pen border = new Pen(Graphite.Border))
+            {
+                graphics.FillRectangle(surface, bounds);
+                graphics.DrawRectangle(border, 0, 0, Math.Max(0, bounds.Width - 1), Math.Max(0, bounds.Height - 1));
+            }
         }
         if (rows.Count == 0)
         {
