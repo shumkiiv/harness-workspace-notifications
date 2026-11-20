@@ -31,7 +31,7 @@ internal sealed class TelegramPublisher
     // reset is permitted only after the UI has explicitly verified the address.
     internal bool Configure(TelegramCredentials draft, bool reset)
     {
-        if (closed || draft == null) return false;
+        if (closed || draft == null || (draft.Enabled && TelegramCredentialStore.IsOwnBotChat(draft.BotToken, draft.ChatId))) return false;
         bool freshAddress = !SameAddress(current, draft) || reset;
         TelegramCredentials next = Copy(draft);
         if (SameAddress(current, next) && !reset) { next.MessageId = current.MessageId; next.Uncertain = current.Uncertain; }
@@ -47,7 +47,12 @@ internal sealed class TelegramPublisher
     internal void VerifyDraft(TelegramCredentials draft, Action<TelegramVerifyResult> callback)
     {
         if (callback == null) return;
-        if (draft == null || !TokenLooksValid(draft.BotToken) || draft.ChatId <= 0) { callback(new TelegramVerifyResult(false)); return; }
+        if (draft == null || !TokenLooksValid(draft.BotToken) || draft.ChatId <= 0 ||
+            TelegramCredentialStore.IsOwnBotChat(draft.BotToken, draft.ChatId))
+        {
+            callback(new TelegramVerifyResult(false));
+            return;
+        }
         // A configuration check does not jump ahead of a real publication.
         // The UI can ask again; this preserves the sole in-flight request.
         if (active != null) { callback(new TelegramVerifyResult(false)); return; }
@@ -55,7 +60,8 @@ internal sealed class TelegramPublisher
     }
     private void Drive()
     {
-        if (closed || active != null || current == null || !current.Enabled) return;
+        if (closed || active != null || current == null || !current.Enabled ||
+            TelegramCredentialStore.IsOwnBotChat(current.BotToken, current.ChatId)) return;
         DateTime time = now(); if (time < retryAt) return;
         if (verifiedAddress != Address(current)) { Dispatch(new Flight(FlightKind.Verify, Copy(current), version, null, null, null)); return; }
         if (current.Uncertain) return; // no timed resend after an ambiguous create or restart

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Web.Script.Serialization;
@@ -42,5 +43,14 @@ internal static class TelegramCredentialStore
         for (int i = 0; i < split; i++) if (token[i] < '0' || token[i] > '9') return false;
         for (int i = split + 1; i < token.Length; i++) { char c = token[i]; if (!(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '_' && c != '-') return false; }
         return token.Length - split - 1 >= 20;
+    }
+
+    internal static bool IsOwnBotChat(string token, long chatId)
+    {
+        if (String.IsNullOrEmpty(token) || chatId <= 0) return false;
+        int separator = token.IndexOf(':');
+        long botId;
+        return separator > 0 && Int64.TryParse(token.Substring(0, separator), NumberStyles.None,
+            CultureInfo.InvariantCulture, out botId) && botId == chatId;
     }
 }

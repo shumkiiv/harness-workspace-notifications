@@ -4,6 +4,8 @@ using System.Windows.Forms;
 
 internal static class TelegramSettingsUi
 {
+    private const string OwnBotHint = "Введён ID бота. Укажите свой ID пользователя Telegram.";
+
     // This dialog owns no credentials and never talks to the store.  The
     // publisher owns the one durable record and is called only on this UI thread.
     internal static TelegramCredentials Open(IWin32Window owner, bool desktopErrorsEnabled, TelegramPublisher publisher,
@@ -73,6 +75,7 @@ internal static class TelegramSettingsUi
 
             Label state = new Label { ForeColor = secondary, TextAlign = ContentAlignment.MiddleLeft,
                 Text = desktopErrorsEnabled ? "Сначала проверьте личный чат." : "Сообщения об ошибках зависят от уведомлений Windows." };
+            if (hasSaved && TelegramCredentialStore.IsOwnBotChat(saved.BotToken, saved.ChatId)) state.Text = OwnBotHint;
             Place(form, state, px, 16, footerTop, 388, 32);
             Button verify = MakeButton("Проверить", card, primary, border);
             verify.Enabled = publisher != null;
@@ -96,6 +99,7 @@ internal static class TelegramSettingsUi
             {
                 long id; string entered = token.Text == "••••••••" && hasSaved ? saved.BotToken : token.Text;
                 if (!Int64.TryParse(chat.Text, out id) || id <= 0 || !TelegramCredentialStore.ValidToken(entered)) { state.Text = "Проверьте токен и ID личного чата."; return; }
+                if (TelegramCredentialStore.IsOwnBotChat(entered, id)) { state.Text = OwnBotHint; return; }
                 TelegramCredentials candidate = new TelegramCredentials { BotToken = entered, ChatId = id, ErrorNotice = errors.Checked };
                 verify.Enabled = false; state.Text = "Проверяем личный чат…";
                 publisher.VerifyDraft(candidate, delegate(TelegramPublisher.TelegramVerifyResult checkedChat)
@@ -110,6 +114,7 @@ internal static class TelegramSettingsUi
             {
                 long id; string entered = token.Text == "••••••••" && hasSaved ? saved.BotToken : token.Text;
                 if (!Int64.TryParse(chat.Text, out id) || publisher == null) return;
+                if (enabled.Checked && TelegramCredentialStore.IsOwnBotChat(entered, id)) { state.Text = OwnBotHint; return; }
                 bool changed = !hasSaved || id != saved.ChatId || entered != saved.BotToken;
                 if (enabled.Checked && (!hasSaved || !saved.Enabled || changed || reset.Checked) && (verifiedToken != entered || verifiedChat != id)) { state.Text = "Изменённые данные нужно проверить."; return; }
                 TelegramCredentials value = new TelegramCredentials { BotToken = entered, ChatId = id, Enabled = enabled.Checked, ErrorNotice = errors.Checked };

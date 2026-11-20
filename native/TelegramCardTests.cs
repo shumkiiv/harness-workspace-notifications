@@ -26,6 +26,7 @@ internal static class TelegramCardTests
     {
         if (!ParserContract()) return false;
         if (!InvariantProjection()) return false;
+        if (!RejectsOwnBot()) return false;
         DateTime clock = new DateTime(2026, 1, 1); Fake fake = new Fake(); Store store = new Store { Fail = false };
         Action<Action> inline = delegate(Action action) { action(); };
         TelegramPublisher publisher = new TelegramPublisher(fake, "x", inline, inline, delegate { return clock; }, store.Save);
@@ -41,6 +42,25 @@ internal static class TelegramCardTests
         if (!publisher.Current.Uncertain || fake.Creates != 2) return false;
         clock = clock.AddMinutes(10); publisher.Tick("{\"snapshot\":4}", TelegramPublisher.StableKey("{\"snapshot\":4}"));
         return fake.Creates == 2 && TelegramCredentialStore.ValidToken(settings.BotToken);
+    }
+    private static bool RejectsOwnBot()
+    {
+        Fake fake = new Fake();
+        Store store = new Store();
+        Action<Action> inline = delegate(Action action) { action(); };
+        TelegramPublisher publisher = new TelegramPublisher(fake, "test", inline, inline,
+            delegate { return new DateTime(2026, 1, 1); }, store.Save);
+        TelegramCredentials wrong = new TelegramCredentials
+        {
+            Enabled = true, BotToken = "123456:abcdefghijklmnopqrstuvwxyz_123", ChatId = 123456
+        };
+        publisher.Load(wrong);
+        publisher.Tick("{\"rows\":[]}", "test");
+        bool rejected = false;
+        publisher.VerifyDraft(wrong, delegate(TelegramPublisher.TelegramVerifyResult result) { rejected = !result.Confirmed; });
+        if (!rejected || publisher.Configure(wrong, false) || fake.Gets != 0 || fake.Creates != 0 || store.Saves != 0) return false;
+        wrong.Enabled = false;
+        return publisher.Configure(wrong, false) && store.Saves == 1 && fake.Gets == 0;
     }
     private static bool ParserContract()
     {
