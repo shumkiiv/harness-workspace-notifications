@@ -54,6 +54,8 @@
 
 [Настройки в светлой теме](docs/screenshots/fluent-settings-medium-light.png) · [Настройки в тёмной теме](docs/screenshots/fluent-settings-medium-dark.png) · [Виджет](docs/screenshots/fluent-widget-medium-light.png) · [Уведомления](docs/screenshots/fluent-notifications-medium-light.png). На снимках вымышленные данные.
 
+[Вкладка «Состояния»](docs/screenshots/modern-states-125.png) · [Вкладка «Лимиты»](docs/screenshots/modern-limits-125.png)
+
 ## Лимиты ИИ
 
 Для Codex виджет использует подключение Codex Connect. Если подключение передаёт кредиты или доступный остаток по индивидуальному ограничению расходов, они появляются отдельной строкой. DeepSeek Account может показать баланс кошелька в валюте через подключённый аккаунт. Отдельная строка DeepSeek показывает доступный баланс API-аккаунта в USD или CNY. Z.ai Coding показывает остаток по тем окнам Coding Plan, которые вернул глобальный сервис Z.ai, и время сброса, когда оно известно.

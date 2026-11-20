@@ -712,6 +712,9 @@ public sealed class SettingsForm : Form
             limitPageCaption.Width = Math.Max(1, nextLimitPage.Left - limitPageCaption.Left - 4);
         }
         FitRows();
+        // The card borders are drawn by the parent, outside its child controls.
+        // Invalidating only moved rows can leave old border fragments on screen.
+        if (ModernTheme.Enabled) contentPanel.Invalidate();
         }
         finally
         {
@@ -2978,6 +2981,24 @@ public sealed class DshNotifyGui : Form
                 && longForm.ClientSize.Height <= 344 && settingsContent.Controls.Cast<Control>().Where(control => control.Visible)
                 .All(control => settingsContent.ClientRectangle.Contains(control.Bounds));
         }
+        ComboBox longInterface = (ComboBox)longForm.Controls.Find("interface-style", true).Single();
+        longInterface.SelectedIndex = 1;
+        Button statesTab = longForm.Controls.Cast<Control>().OfType<Panel>().SelectMany(panel => panel.Controls.Cast<Control>())
+            .OfType<Button>().Single(button => button.AccessibleName == "Состояния");
+        bool settingsCardsRedraw = true;
+        foreach (Button tab in new[] { statesTab, limitsTab })
+        {
+            bool fullInvalidation = false;
+            InvalidateEventHandler checkDamage = delegate(object sender, InvalidateEventArgs args)
+            {
+                fullInvalidation |= args.InvalidRect.Contains(settingsContent.ClientRectangle);
+            };
+            settingsContent.Invalidated += checkDamage;
+            tab.PerformClick();
+            settingsContent.Invalidated -= checkDamage;
+            settingsCardsRedraw &= fullInvalidation;
+        }
+        longInterface.SelectedIndex = 0;
         longForm.Dispose();
         Form location = new Form();
         location.Width = 100;
@@ -3254,7 +3275,7 @@ public sealed class DshNotifyGui : Form
             && interfaceStyleDefaultsClassic && interfaceStyleModern && interfaceStyleReturnsClassic && modernPaintCoversBuffer;
         passed = passed && settingsScaleLarge && settingsScaleSmall && settingsScaleNoDrift && settingsChildrenFit && providerScaleStable
             && explicitLightTheme && systemThemeDoesNotOverwriteLegacy && settingsNoScrollbars && settingsPagingKeepsLimitRowsReachable
-            && settingsFitsWorkingAreaAtAllScales && settingsThemesKeepLayoutStable;
+            && settingsFitsWorkingAreaAtAllScales && settingsThemesKeepLayoutStable && settingsCardsRedraw;
         passed = passed && noEcho && allRowsShown && allNoticesShown && interactionIds && registeredIdleFiltered;
         passed = passed && matrix && fieldsHidden && rowsReplaced && compactToggle && noticePresentation
             && completedRowFirst && completedNoticeFirst && noticeHeightAndWidth && fixedWidgetWidth && wholeCardScroll;
@@ -3293,6 +3314,7 @@ public sealed class DshNotifyGui : Form
             + ",\"settingsPagingKeepsLimitRowsReachable\":" + JsonBool(settingsPagingKeepsLimitRowsReachable)
             + ",\"settingsFitsWorkingAreaAtAllScales\":" + JsonBool(settingsFitsWorkingAreaAtAllScales)
             + ",\"settingsThemesKeepLayoutStable\":" + JsonBool(settingsThemesKeepLayoutStable)
+            + ",\"settingsCardsRedraw\":" + JsonBool(settingsCardsRedraw)
             + ",\"moveEmitted\":" + JsonBool(moveEmitted)
             + ",\"moveStored\":" + JsonBool(moveStored)
             + ",\"noEcho\":" + JsonBool(noEcho)
