@@ -54,14 +54,32 @@ internal static class ModernTheme
 
     internal static GraphicsPath Rounded(Rectangle bounds, int radius)
     {
+        int maximumRadius = Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2);
+        radius = Math.Max(1, Math.Min(radius, maximumRadius));
         int diameter = radius * 2;
         GraphicsPath path = new GraphicsPath();
         path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
-        path.AddArc(bounds.Right - diameter - 1, bounds.Top, diameter, diameter, 270, 90);
-        path.AddArc(bounds.Right - diameter - 1, bounds.Bottom - diameter - 1, diameter, diameter, 0, 90);
-        path.AddArc(bounds.Left, bounds.Bottom - diameter - 1, diameter, diameter, 90, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
         path.CloseFigure();
         return path;
+    }
+
+    internal static void ApplyWindowRegion(Form form)
+    {
+        if (form == null || form.IsDisposed) return;
+        if (!Enabled)
+        {
+            form.Region = null;
+            return;
+        }
+        Rectangle bounds = form.Bounds;
+        Rectangle local = new Rectangle(0, 0, Math.Max(1, bounds.Width), Math.Max(1, bounds.Height));
+        using (GraphicsPath path = Rounded(local, 12))
+        {
+            form.Region = new Region(path);
+        }
     }
 }
 
@@ -83,15 +101,22 @@ internal sealed class ModernToggle : CheckBox
         // which this modern rendering path replaces.
         using (Brush background = new SolidBrush(BackColor))
             args.Graphics.FillRectangle(background, ClientRectangle);
-        Rectangle track = new Rectangle(Math.Max(0, Width - 42), Math.Max(1, (Height - 20) / 2), 38, 20);
-        using (GraphicsPath path = ModernTheme.Rounded(track, 10))
+        int inset = Math.Max(1, Math.Min(2, Height / 4));
+        int trackHeight = Math.Max(2, Math.Min(20, Height - inset * 2));
+        int trackWidth = Math.Max(trackHeight, Math.Min(38, Math.Max(1, Width - inset * 2)));
+        Rectangle track = new Rectangle(Math.Max(0, Width - trackWidth - inset), Math.Max(0, (Height - trackHeight) / 2), trackWidth, trackHeight);
+        GraphicsState state = args.Graphics.Save();
+        args.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (GraphicsPath path = ModernTheme.Rounded(track, track.Height / 2))
         using (Brush fill = new SolidBrush(Checked ? ModernTheme.Accent : ModernTheme.CardBorder))
         using (Brush thumb = new SolidBrush(Color.White))
         {
             args.Graphics.FillPath(fill, path);
-            int left = Checked ? track.Right - 18 : track.Left + 2;
-            args.Graphics.FillEllipse(thumb, left, track.Top + 2, 16, 16);
+            int thumbDiameter = Math.Max(1, track.Height - inset * 2);
+            int left = Checked ? track.Right - thumbDiameter - inset : track.Left + inset;
+            args.Graphics.FillEllipse(thumb, left, track.Top + inset, thumbDiameter, thumbDiameter);
         }
+        args.Graphics.Restore(state);
         TextRenderer.DrawText(args.Graphics, Text, Font, new Rectangle(0, 0, Math.Max(1, track.Left - 5), Height),
             ModernTheme.TextPrimary, ModernTheme.TextFlags | TextFormatFlags.VerticalCenter);
         if (Focused) ControlPaint.DrawFocusRectangle(args.Graphics, ClientRectangle, ModernTheme.TextPrimary, BackColor);

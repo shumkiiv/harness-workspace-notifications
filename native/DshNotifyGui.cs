@@ -239,6 +239,8 @@ public sealed class SettingsForm : Form
     private Button previousLimitPage;
     private Button nextLimitPage;
     private Label limitPageCaption;
+    private readonly Dictionary<string, string> limitProviderCatalog = new Dictionary<string, string>();
+    private bool refreshedDuringSave;
 
     public Button SaveButton { get; private set; }
 
@@ -279,7 +281,7 @@ public sealed class SettingsForm : Form
             tabButtons.Add(tab);
         }
         Controls.Add(navPanel);
-        modernPageTitle = new Label { Text = "Общие", Visible = false, Font = new Font("Segoe UI", 11F, FontStyle.Bold), AutoEllipsis = true };
+        modernPageTitle = new Label { Name = "modern-page-title", Text = "Общие", Visible = false, Font = new Font("Segoe UI", 11F, FontStyle.Bold), AutoEllipsis = true };
         Controls.Add(modernPageTitle);
         int top = 72;
         page = 0;
@@ -339,6 +341,7 @@ public sealed class SettingsForm : Form
             string label = Convert.ToString(provider.ContainsKey("label") ? provider["label"] : id);
             Add("limit-" + id, label, !value.HiddenLimitProviders.Contains(id), ref top);
         }
+        foreach (KeyValuePair<string, string> provider in ProviderCatalog(providers)) limitProviderCatalog[provider.Key] = provider.Value;
         SaveButton = new Button();
         SaveButton.Text = "Готово";
         SaveButton.SetBounds(296, 290, 84, 26);
@@ -385,6 +388,7 @@ public sealed class SettingsForm : Form
         ApplyOwnPalette(this);
         StyleTabs();
         CaptureScaleBaseline(this);
+        Resize += delegate { ModernTheme.ApplyWindowRegion(this); };
         ApplyWindowScale();
         ApplyInterfaceStyleRebuild();
     }
@@ -422,9 +426,11 @@ public sealed class SettingsForm : Form
 
     public void UpdateLimitProviders(List<Dictionary<string, object>> providers)
     {
+        Dictionary<string, string> catalog = ProviderCatalog(providers);
+        if (CatalogEquals(limitProviderCatalog, catalog)) return;
         int previousPage = page;
         page = 3;
-        HashSet<string> wanted = new HashSet<string>((providers ?? new List<Dictionary<string, object>>()).Select(provider => Convert.ToString(provider.ContainsKey("id") ? provider["id"] : "")).Where(id => !String.IsNullOrEmpty(id)));
+        HashSet<string> wanted = new HashSet<string>(catalog.Keys);
         foreach (string key in checks.Keys.Where(key => key.StartsWith("limit-", StringComparison.Ordinal) && !wanted.Contains(key.Substring(6))).ToList())
         {
             Control control = checks[key]; contentPanel.Controls.Remove(control); pages.Remove(control); checks.Remove(key);
@@ -433,19 +439,43 @@ public sealed class SettingsForm : Form
         float factor = WindowScaleFactor();
         int top = pages.Where(item => item.Value == 3).Select(item => scaleBounds.ContainsKey(item.Key)
             ? scaleBounds[item.Key].Bottom + 2 : (int)Math.Round(item.Key.Bottom / factor) + 2).DefaultIfEmpty(8).Max();
-        foreach (Dictionary<string, object> provider in providers ?? new List<Dictionary<string, object>>())
+        foreach (KeyValuePair<string, string> provider in catalog)
         {
-            string id = Convert.ToString(provider.ContainsKey("id") ? provider["id"] : "");
-            if (String.IsNullOrEmpty(id)) continue;
-            string label = Convert.ToString(provider.ContainsKey("label") ? provider["label"] : id);
+            string id = provider.Key;
+            string label = provider.Value;
             CheckBox existing; if (checks.TryGetValue("limit-" + id, out existing)) { existing.Text = label; continue; }
             Add("limit-" + id, label, !value.HiddenLimitProviders.Contains(id), ref top);
             CaptureScaleBaseline(checks["limit-" + id]);
         }
         page = previousPage;
+        limitProviderCatalog.Clear();
+        foreach (KeyValuePair<string, string> provider in catalog) limitProviderCatalog[provider.Key] = provider.Value;
         FitRows();
         ShowPage(previousPage);
         ApplyWindowScale();
+    }
+
+    private static Dictionary<string, string> ProviderCatalog(List<Dictionary<string, object>> providers)
+    {
+        Dictionary<string, string> result = new Dictionary<string, string>();
+        foreach (Dictionary<string, object> provider in providers ?? new List<Dictionary<string, object>>())
+        {
+            string id = Convert.ToString(provider.ContainsKey("id") ? provider["id"] : "");
+            if (String.IsNullOrEmpty(id) || result.ContainsKey(id)) continue;
+            result.Add(id, Convert.ToString(provider.ContainsKey("label") ? provider["label"] : id));
+        }
+        return result;
+    }
+
+    private static bool CatalogEquals(Dictionary<string, string> left, Dictionary<string, string> right)
+    {
+        if (left.Count != right.Count) return false;
+        foreach (KeyValuePair<string, string> item in left)
+        {
+            string label;
+            if (!right.TryGetValue(item.Key, out label) || label != item.Value) return false;
+        }
+        return true;
     }
 
     public void RefreshTheme()
@@ -456,6 +486,7 @@ public sealed class SettingsForm : Form
         checks["show-limits"].Checked = value.ShowLimits;
         checks["compact-widget"].Checked = value.CompactWidget;
         syncing = false;
+        refreshedDuringSave = true;
         ApplyInterfaceStyleRebuild();
         ApplyWindowScale();
     }
@@ -467,7 +498,7 @@ public sealed class SettingsForm : Form
         Label label = control as Label;
         if (label != null)
         {
-            label.BackColor = ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card;
+            label.BackColor = ModernTheme.Enabled && label.Name == "modern-page-title" ? ModernTheme.Surface : (ModernTheme.Enabled ? ModernTheme.Card : Graphite.Card);
             label.ForeColor = label.Name == "settings-section" ? (ModernTheme.Enabled ? ModernTheme.Accent : Graphite.Accent("running")) : (ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary);
         }
         Button button = control as Button;
@@ -736,6 +767,7 @@ public sealed class SettingsForm : Form
     private void Save()
     {
         if (syncing) return;
+        refreshedDuringSave = false;
         bool wasCompactWorkspaceList = value.CompactWorkspaceList;
         value.ShowWidget = checks["show-widget"].Checked;
         value.ShowNotifications = checks["show-notices"].Checked;
@@ -777,8 +809,11 @@ public sealed class SettingsForm : Form
         value.StatusUnknown = checks["status-unknown"].Checked;
         value.StatusDisposed = checks["status-disposed"].Checked;
         changed(value);
-        ApplyInterfaceStyleRebuild();
-        ApplyWindowScale();
+        if (!refreshedDuringSave)
+        {
+            ApplyInterfaceStyleRebuild();
+            ApplyWindowScale();
+        }
     }
 
     public void ApplyInterfaceStyleRebuild()
@@ -829,6 +864,7 @@ public sealed class SettingsForm : Form
         }
         contentPanel.Invalidate();
         if (!fittingContent) FitToVisibleContent();
+        ModernTheme.ApplyWindowRegion(this);
     }
 
     private void PaintModernCards(object sender, PaintEventArgs args)
@@ -902,7 +938,8 @@ public sealed class SettingsForm : Form
         }
         Rectangle root = scaleBounds[this];
         MinimumSize = new Size(Math.Max(1, (int)Math.Round(360 * factor)), Math.Max(1, (int)Math.Round(280 * factor)));
-        ClientSize = new Size(Math.Max(1, (int)Math.Round(root.Width * factor)), Math.Max(1, (int)Math.Round(root.Height * factor)));
+        int targetWidth = ModernTheme.Enabled ? (int)Math.Round(550 * factor) : (int)Math.Round(root.Width * factor);
+        ClientSize = new Size(Math.Max(1, targetWidth), Math.Max(1, (int)Math.Round(root.Height * factor)));
         foreach (KeyValuePair<Control, Rectangle> item in scaleBounds.Where(item => item.Key != this && !item.Key.IsDisposed)
             .OrderBy(item => ControlDepth(item.Key)).ToList())
         {
@@ -1026,6 +1063,12 @@ public sealed class NotificationWindow : Form
             }
         }
         base.WndProc(ref message);
+    }
+
+    protected override void OnResize(EventArgs args)
+    {
+        base.OnResize(args);
+        ModernTheme.ApplyWindowRegion(this);
     }
 }
 
@@ -1383,6 +1426,10 @@ public sealed class DshNotifyGui : Form
 
     [DllImport("user32.dll", EntryPoint = "SendMessageW", ExactSpelling = true)]
     private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern bool RedrawWindow(IntPtr window, IntPtr update, IntPtr region, uint flags);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern bool ShowWindow(IntPtr window, int command);
 
     private readonly JavaScriptSerializer json = new JavaScriptSerializer();
     private readonly StreamWriter output;
@@ -1429,6 +1476,9 @@ public sealed class DshNotifyGui : Form
     private DateTime limitsReceivedAt = DateTime.MinValue;
 
     private const int SettingChangeMessage = 0x001A;
+    private const int SetRedrawMessage = 0x000B;
+    private const int HideWindowCommand = 0;
+    private const uint RedrawFrameAndChildren = 0x0400U | 0x0080U | 0x0001U | 0x0004U;
 
     private float WidgetScaleFactor { get { return Settings != null && Settings.WidgetScale == "small" ? .85F : (Settings != null && Settings.WidgetScale == "large" ? 1.25F : 1F); } }
     private static void NormalizeTheme(Settings settings)
@@ -1738,12 +1788,17 @@ public sealed class DshNotifyGui : Form
         compact.WidgetZoom = WidgetScaleFactor;
         limits.WidgetZoom = WidgetScaleFactor;
         resizeGrip.Height = Px(ResizeGripHeight);
-        ApplyEffectiveTheme();
-        lastShowWidget = Settings.ShowWidget;
-        lastShowNotifications = Settings.ShowNotifications;
-        SettingsApplier.ApplyLocation(this, Settings.WidgetX, Settings.WidgetY);
-        SettingsApplier.ApplyLocation(stack, Settings.NoticeX, Settings.NoticeY);
-        Render();
+        Action apply = delegate
+        {
+            ApplyEffectiveTheme();
+            lastShowWidget = Settings.ShowWidget;
+            lastShowNotifications = Settings.ShowNotifications;
+            SettingsApplier.ApplyLocation(this, Settings.WidgetX, Settings.WidgetY);
+            SettingsApplier.ApplyLocation(stack, Settings.NoticeX, Settings.NoticeY);
+            Render();
+        };
+        if (ThemeVisualsChanged()) RunStyleTransition(apply);
+        else apply();
         if (!Settings.ShowWidget)
         {
             Hide();
@@ -1776,10 +1831,10 @@ public sealed class DshNotifyGui : Form
         compact.WidgetZoom = WidgetScaleFactor;
         limits.WidgetZoom = WidgetScaleFactor;
         resizeGrip.Height = Px(ResizeGripHeight);
-        ApplyEffectiveTheme();
+        if (ThemeVisualsChanged()) RunStyleTransition(delegate { ApplyEffectiveTheme(); Render(); });
+        else { ApplyEffectiveTheme(); Render(); }
         lastShowWidget = Settings.ShowWidget;
         lastShowNotifications = Settings.ShowNotifications;
-        Render();
         if (!Settings.ShowWidget)
         {
             Hide();
@@ -1797,6 +1852,43 @@ public sealed class DshNotifyGui : Form
             ShowNotices();
         }
         Send("settings.changed", "settings", Settings);
+    }
+
+    private void RunStyleTransition(Action action)
+    {
+        List<KeyValuePair<Form, IntPtr>> visibleForms = new List<KeyValuePair<Form, IntPtr>>();
+        foreach (Form form in new Form[] { this, stack }.Concat(settingsForms.Cast<Form>()))
+        {
+            if (form != null && !form.IsDisposed && form.IsHandleCreated && !form.InvokeRequired && form.Visible)
+                visibleForms.Add(new KeyValuePair<Form, IntPtr>(form, form.Handle));
+        }
+        try
+        {
+            foreach (KeyValuePair<Form, IntPtr> form in visibleForms) SendMessage(form.Value, SetRedrawMessage, IntPtr.Zero, IntPtr.Zero);
+            action();
+        }
+        finally
+        {
+            foreach (KeyValuePair<Form, IntPtr> form in visibleForms)
+            {
+                if (form.Key.IsDisposed || !form.Key.IsHandleCreated || form.Key.Handle != form.Value) continue;
+                SendMessage(form.Value, SetRedrawMessage, new IntPtr(1), IntPtr.Zero);
+                if (!form.Key.Visible) ShowWindow(form.Value, HideWindowCommand);
+                else RedrawWindow(form.Value, IntPtr.Zero, IntPtr.Zero, RedrawFrameAndChildren);
+            }
+        }
+    }
+
+    private bool ThemeVisualsChanged()
+    {
+        return ModernTheme.Enabled != (Settings.NormalizedInterfaceStyle == "modern")
+            || Graphite.IsDark != EffectiveThemeDark(Settings);
+    }
+
+    protected override void OnResize(EventArgs args)
+    {
+        base.OnResize(args);
+        ModernTheme.ApplyWindowRegion(this);
     }
 
     public void Process(string line)
@@ -1946,6 +2038,8 @@ public sealed class DshNotifyGui : Form
             }
             ((SettingsForm)form).RefreshTheme();
         }
+        ModernTheme.ApplyWindowRegion(this);
+        ModernTheme.ApplyWindowRegion(stack);
         Invalidate(true);
         stack.Invalidate(true);
     }

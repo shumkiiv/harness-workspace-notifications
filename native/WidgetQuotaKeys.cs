@@ -76,6 +76,8 @@ internal static class WidgetQuotaKeys
             form.MinimizeBox = false;
             form.StartPosition = FormStartPosition.CenterParent;
             form.ClientSize = new System.Drawing.Size(390, ModernTheme.Enabled ? 202 : 178);
+            form.Resize += delegate { ModernTheme.ApplyWindowRegion(form); };
+            ModernTheme.ApplyWindowRegion(form);
             form.BackColor = ModernTheme.Enabled ? ModernTheme.Surface : Graphite.Base;
             form.ForeColor = ModernTheme.Enabled ? ModernTheme.TextPrimary : Graphite.Primary;
             int top = ModernTheme.Enabled ? 38 : 14;
