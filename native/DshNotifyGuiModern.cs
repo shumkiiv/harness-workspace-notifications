@@ -68,17 +68,21 @@ internal static class ModernTheme
 
     internal static void ApplyWindowRegion(Form form)
     {
-        if (form == null || form.IsDisposed) return;
+        ApplyRegion(form, 12);
+    }
+
+    internal static void ApplyRegion(Control control, int radius)
+    {
+        if (control == null || control.IsDisposed) return;
         if (!Enabled)
         {
-            form.Region = null;
+            control.Region = null;
             return;
         }
-        Rectangle bounds = form.Bounds;
-        Rectangle local = new Rectangle(0, 0, Math.Max(1, bounds.Width), Math.Max(1, bounds.Height));
-        using (GraphicsPath path = Rounded(local, 12))
+        Rectangle local = new Rectangle(0, 0, Math.Max(1, control.Width), Math.Max(1, control.Height));
+        using (GraphicsPath path = Rounded(local, radius))
         {
-            form.Region = new Region(path);
+            control.Region = new Region(path);
         }
     }
 }

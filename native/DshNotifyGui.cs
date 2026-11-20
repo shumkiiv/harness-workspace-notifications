@@ -1438,6 +1438,29 @@ internal static class HarnessWindowProbe
     private const int GwlExStyle = -20;
     private const long WsExToolWindow = 0x00000080L;
     private const int DwmwaCloaked = 14;
+    private const int RestoreWindow = 9;
+    private const uint ProcessSnapshot = 2;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ProcessEntry
+    {
+        public uint Size, Usage, Id;
+        public UIntPtr DefaultHeap;
+        public uint ModuleId, Threads, ParentId;
+        public int BasePriority;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string Executable;
+    }
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateToolhelp32Snapshot(uint flags, uint processId);
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool Process32FirstW(Microsoft.Win32.SafeHandles.SafeFileHandle snapshot, ref ProcessEntry entry);
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool Process32NextW(Microsoft.Win32.SafeHandles.SafeFileHandle snapshot, ref ProcessEntry entry);
 
     private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
 
@@ -1452,6 +1475,15 @@ internal static class HarnessWindowProbe
     [DllImport("user32.dll", ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindowAsync(IntPtr window, int command);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AllowSetForegroundWindow(uint processId);
     [DllImport("user32.dll", ExactSpelling = true)]
     private static extern IntPtr GetWindow(IntPtr window, int command);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW", ExactSpelling = true)]
@@ -1481,6 +1513,63 @@ internal static class HarnessWindowProbe
         }
     }
 
+    internal static bool TryActivateDesktop()
+    {
+        uint desktop;
+        UInt32.TryParse(Environment.GetEnvironmentVariable("DSH_WN_DESKTOP_PID"), out desktop);
+        HashSet<uint> candidates = CandidateProcessIds();
+        if (!candidates.Contains(desktop)) desktop = AddLaunchParents(candidates);
+        foreach (uint id in candidates)
+        {
+            try
+            {
+                using (Process process = Process.GetProcessById((int)id))
+                {
+                    if (!String.Equals(process.ProcessName, HarnessProcessName, StringComparison.Ordinal)) continue;
+                    IntPtr window = process.MainWindowHandle;
+                    uint owner;
+                    if (window != IntPtr.Zero && GetWindowThreadProcessId(window, out owner) != 0 &&
+                        owner == id && IsTopLevelVisibleWindow(window, true))
+                    {
+                        if (IsIconic(window)) ShowWindowAsync(window, RestoreWindow);
+                        if (SetForegroundWindow(window)) return true;
+                    }
+                    // Let the protocol activate a desktop window hidden to the tray.
+                    if (id == desktop) AllowSetForegroundWindow(id);
+                }
+            }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+        }
+        return false;
+    }
+
+    private static uint AddLaunchParents(HashSet<uint> candidates)
+    {
+        // An already-running host may still use a launcher that supplied no desktop PID.
+        uint helper;
+        using (Process current = Process.GetCurrentProcess()) helper = (uint)current.Id;
+        Dictionary<uint, uint> parents = new Dictionary<uint, uint>();
+        using (var snapshot = CreateToolhelp32Snapshot(ProcessSnapshot, 0))
+        {
+            if (snapshot.IsInvalid) return 0;
+            ProcessEntry entry = new ProcessEntry { Size = (uint)Marshal.SizeOf(typeof(ProcessEntry)) };
+            if (!Process32FirstW(snapshot, ref entry)) return 0;
+            do
+            {
+                if (entry.Id == helper || String.Equals(entry.Executable, HarnessProcessName + ".exe", StringComparison.OrdinalIgnoreCase))
+                    parents[entry.Id] = entry.ParentId;
+            } while (Process32NextW(snapshot, ref entry));
+        }
+        uint host, desktop;
+        if (!parents.TryGetValue(helper, out host) || !parents.TryGetValue(host, out desktop)) return 0;
+        candidates.Add(host);
+        if (!parents.ContainsKey(desktop)) return host;
+        candidates.Add(desktop);
+        return desktop;
+    }
+
     private static HashSet<uint> CandidateProcessIds()
     {
         HashSet<uint> result = new HashSet<uint>();
@@ -1508,9 +1597,9 @@ internal static class HarnessWindowProbe
         }
     }
 
-    private static bool IsTopLevelVisibleWindow(IntPtr window)
+    private static bool IsTopLevelVisibleWindow(IntPtr window, bool includeMinimized = false)
     {
-        if (!IsWindowVisible(window) || IsIconic(window) || GetWindow(window, GwOwner) != IntPtr.Zero) return false;
+        if (!IsWindowVisible(window) || (!includeMinimized && IsIconic(window)) || GetWindow(window, GwOwner) != IntPtr.Zero) return false;
         if ((GetWindowLong(window, GwlExStyle) & WsExToolWindow) != 0) return false;
         try
         {
@@ -2222,6 +2311,7 @@ public sealed class DshNotifyGui : Form
         noticeHeader.BackColor = surface;
         noticeHeaderTitle.ForeColor = ModernTheme.Enabled ? ModernTheme.TextSecondary : Graphite.Secondary;
         StyleHeaderButton(noticeHeaderClose);
+        LayoutNoticeHeaderClose();
         foreach (Button button in headerButtons) StyleHeaderButton(button);
         foreach (Form form in settingsForms)
         {
@@ -2469,11 +2559,24 @@ public sealed class DshNotifyGui : Form
         title.MouseDown += drag;
         Button hide = NoticeCloseButton("Скрыть уведомления");
         noticeHeaderClose = hide;
-        hide.Dock = DockStyle.Right;
+        hide.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         hide.Click += delegate { HideNoticeStack(); };
         header.Controls.Add(title);
         header.Controls.Add(hide);
+        hide.BringToFront();
+        header.SizeChanged += delegate { LayoutNoticeHeaderClose(); };
+        LayoutNoticeHeaderClose();
         return header;
+    }
+
+    private void LayoutNoticeHeaderClose()
+    {
+        bool modern = ModernTheme.Enabled;
+        int size = modern ? 22 : 28;
+        int inset = modern ? 8 : 2;
+        noticeHeaderClose.SetBounds(Math.Max(0, noticeHeader.ClientSize.Width - size - inset),
+            Math.Max(0, (noticeHeader.ClientSize.Height - size) / 2), size, size);
+        if (modern) noticeHeaderClose.BackColor = noticeHeader.BackColor;
     }
 
     private Panel MakeNoticeCard(string id, Dictionary<string, object> notice)
@@ -2485,7 +2588,7 @@ public sealed class DshNotifyGui : Form
             Margin = new Padding(0, 0, 0, 6),
             AccessibleName = "Уведомление о задаче"
         };
-        ApplyModernCardPaint(card);
+        ApplyModernCardPaint(card, true);
         Button close = NoticeCloseButton("Закрыть уведомление");
         close.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         close.Location = new Point(card.Width - close.Width - 4, 3);
@@ -2595,11 +2698,19 @@ public sealed class DshNotifyGui : Form
         return button;
     }
 
-    private static void ApplyModernCardPaint(Panel card)
+    private static void ApplyModernCardPaint(Panel card, bool clipCorners = false)
     {
+        if (clipCorners && ModernTheme.Enabled)
+        {
+            card.Resize += delegate { ModernTheme.ApplyRegion(card, 8); };
+            ModernTheme.ApplyRegion(card, 8);
+        }
         card.Paint += delegate(object sender, PaintEventArgs args)
         {
-            if (ModernTheme.Enabled) ModernTheme.PaintCard(args.Graphics, new Rectangle(0, 0, card.ClientSize.Width, card.ClientSize.Height));
+            if (!ModernTheme.Enabled) return;
+            Rectangle bounds = card.ClientRectangle;
+            if (clipCorners) bounds.Size = new Size(Math.Max(1, bounds.Width - 1), Math.Max(1, bounds.Height - 1));
+            ModernTheme.PaintCard(args.Graphics, bounds);
         };
     }
 
@@ -2718,7 +2829,10 @@ public sealed class DshNotifyGui : Form
         {
             if (args.Button != MouseButtons.Left) return;
             Send("session.open", "sessionId", sessionId);
-            if (!demoMode) { try { System.Diagnostics.Process.Start(DshOpenUrl); } catch { } }
+            if (!demoMode && !HarnessWindowProbe.TryActivateDesktop())
+            {
+                try { System.Diagnostics.Process.Start(DshOpenUrl); } catch { }
+            }
         };
         foreach (Control child in control.Controls) if (child != excluded) BindSessionOpen(child, sessionId, excluded);
         if (control != excluded) control.MouseClick += click;
