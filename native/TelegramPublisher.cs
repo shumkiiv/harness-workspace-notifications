@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 internal sealed class TelegramPublisher
 {
     private const int MinimumUpdateSeconds = 15, HeartbeatSeconds = 120, ErrorSeconds = 300, RetrySeconds = 60, VerifyRetrySeconds = 300;
-    private readonly ITelegramTransport transport; private readonly string html;
+    private readonly ITelegramTransport transport;
     private readonly Action<Action> run, post; private readonly Func<DateTime> now; private readonly Func<TelegramCredentials, bool> save;
     private TelegramCredentials current; private string latestData, latestKey, sentKey, verifiedAddress;
     private DateTime sentAt = DateTime.MinValue, retryAt = DateTime.MinValue, errorAt = DateTime.MinValue;
@@ -21,8 +21,8 @@ internal sealed class TelegramPublisher
     }
     internal sealed class TelegramVerifyResult { internal readonly bool Confirmed; internal TelegramVerifyResult(bool confirmed) { Confirmed = confirmed; } }
 
-    internal TelegramPublisher(ITelegramTransport source, string widgetHtml, Action<Action> background, Action<Action> ownerPost, Func<DateTime> clock, Func<TelegramCredentials, bool> saveCurrent)
-    { transport = source; html = widgetHtml ?? String.Empty; run = background; post = ownerPost; now = clock; save = saveCurrent; }
+    internal TelegramPublisher(ITelegramTransport source, Action<Action> background, Action<Action> ownerPost, Func<DateTime> clock, Func<TelegramCredentials, bool> saveCurrent)
+    { transport = source; run = background; post = ownerPost; now = clock; save = saveCurrent; }
     internal TelegramCredentials Current { get { return Copy(current); } }
 
     // The UI calls this after construction. Demo never does, so a demo never reads CredMan.
@@ -34,7 +34,7 @@ internal sealed class TelegramPublisher
         if (closed || draft == null || (draft.Enabled && TelegramCredentialStore.IsOwnBotChat(draft.BotToken, draft.ChatId))) return false;
         bool freshAddress = !SameAddress(current, draft) || reset;
         TelegramCredentials next = Copy(draft);
-        if (SameAddress(current, next) && !reset) { next.MessageId = current.MessageId; next.Uncertain = current.Uncertain; }
+        if (SameAddress(current, next) && !reset) { next.MessageId = current.MessageId; next.Uncertain = current.Uncertain; next.IsTextMessage = current.IsTextMessage; }
         else { next.MessageId = 0; next.Uncertain = false; }
         if (!save(next)) return false;
         current = next; version++; verifiedAddress = null;
@@ -68,7 +68,7 @@ internal sealed class TelegramPublisher
         if (!String.IsNullOrEmpty(latestData) && Due(time))
         {
             if (current.MessageId > 0) Dispatch(new Flight(FlightKind.Edit, Copy(current), version, latestData, latestKey, null));
-            else { TelegramCredentials pending = Copy(current); pending.Uncertain = true; if (!save(pending)) return; current = pending; Dispatch(new Flight(FlightKind.Create, Copy(current), version, latestData, latestKey, null)); }
+            else { TelegramCredentials pending = Copy(current); pending.Uncertain = true; pending.IsTextMessage = true; if (!save(pending)) return; current = pending; Dispatch(new Flight(FlightKind.Create, Copy(current), version, latestData, latestKey, null)); }
             return;
         }
         if (errorPending && current.ErrorNotice && (time - errorAt).TotalSeconds >= ErrorSeconds) { errorPending = false; errorAt = time; Dispatch(new Flight(FlightKind.Error, Copy(current), version, null, null, null)); }
@@ -83,8 +83,10 @@ internal sealed class TelegramPublisher
             try
             {
                 if (flight.Kind == FlightKind.Verify || flight.Kind == FlightKind.DraftVerify) reply = transport.GetChat(flight.Credentials.BotToken, flight.Credentials.ChatId);
-                else if (flight.Kind == FlightKind.Edit) reply = transport.EditMessageWidgetData(flight.Credentials.BotToken, flight.Credentials.ChatId, flight.Credentials.MessageId, flight.Data);
-                else if (flight.Kind == FlightKind.Create) reply = transport.SendWidget(flight.Credentials.BotToken, flight.Credentials.ChatId, html, flight.Data);
+                else if (flight.Kind == FlightKind.Edit) reply = flight.Credentials.IsTextMessage
+                    ? transport.EditText(flight.Credentials.BotToken, flight.Credentials.ChatId, flight.Credentials.MessageId, TelegramTextFormatter.Format(flight.Data))
+                    : transport.EditMessageWidgetData(flight.Credentials.BotToken, flight.Credentials.ChatId, flight.Credentials.MessageId, flight.Data);
+                else if (flight.Kind == FlightKind.Create) reply = transport.SendSummary(flight.Credentials.BotToken, flight.Credentials.ChatId, TelegramTextFormatter.Format(flight.Data));
                 else reply = transport.SendText(flight.Credentials.BotToken, flight.Credentials.ChatId, "Harness: требуется внимание.");
             }
             catch { reply = new TelegramReply { Uncertain = true }; }
@@ -105,7 +107,7 @@ internal sealed class TelegramPublisher
         if (flight.Kind == FlightKind.Verify) { if (IsPrivate(reply, current.ChatId)) verifiedAddress = Address(current); else retryAt = time.AddSeconds(VerifyRetrySeconds); }
         else if (flight.Kind == FlightKind.Edit)
         {
-            if (reply != null && reply.Ok) MarkSent(flight, time);
+            if (reply != null && (reply.Ok || reply.NotModified)) MarkSent(flight, time);
             else if (IsAmbiguous(reply)) Delay(reply, time); // edit is idempotent: retry the same saved message
             else if (reply != null && reply.MissingMessage) { TelegramCredentials missing = Copy(current); missing.MessageId = 0; missing.Uncertain = false; if (save(missing)) current = missing; else Delay(null, time); }
             else Delay(reply, time);
@@ -136,5 +138,5 @@ internal sealed class TelegramPublisher
     private static readonly Regex Snapshot = new Regex("\\\"snapshot\\\"\\s*:\\s*-?\\d+", RegexOptions.Compiled);
     private static string Address(TelegramCredentials value) { return value == null ? String.Empty : value.BotToken + "|" + value.ChatId.ToString(CultureInfo.InvariantCulture); }
     private static bool SameAddress(TelegramCredentials a, TelegramCredentials b) { return a != null && b != null && a.BotToken == b.BotToken && a.ChatId == b.ChatId; }
-    private static TelegramCredentials Copy(TelegramCredentials value) { return value == null ? null : new TelegramCredentials { Enabled = value.Enabled, ErrorNotice = value.ErrorNotice, BotToken = value.BotToken, ChatId = value.ChatId, MessageId = value.MessageId, Uncertain = value.Uncertain }; }
+    private static TelegramCredentials Copy(TelegramCredentials value) { return value == null ? null : new TelegramCredentials { Enabled = value.Enabled, ErrorNotice = value.ErrorNotice, BotToken = value.BotToken, ChatId = value.ChatId, MessageId = value.MessageId, Uncertain = value.Uncertain, IsTextMessage = value.IsTextMessage }; }
 }

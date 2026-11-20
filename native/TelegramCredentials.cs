@@ -12,6 +12,8 @@ public sealed class TelegramCredentials
     public long ChatId { get; set; }
     public int MessageId { get; set; }
     public bool Uncertain { get; set; }
+    // Absent in old durable records; false preserves widget edits.
+    public bool IsTextMessage { get; set; }
 }
 
 internal static class TelegramCredentialStore

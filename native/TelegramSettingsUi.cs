@@ -66,11 +66,11 @@ internal static class TelegramSettingsUi
 
             Panel options = MakeCard(surface, card);
             Place(form, options, px, 16, 196, 388, optionsHeight);
-            CheckBox enabled = MakeToggle("Включить карточку", hasSaved && saved.Enabled, hasSaved, card, primary);
+            CheckBox enabled = MakeToggle("Включить сводку", hasSaved && saved.Enabled, hasSaved, card, primary);
             Place(options, enabled, px, 12, 8, 364, 28);
             CheckBox errors = MakeToggle("Отдельное сообщение об ошибке", hasSaved && saved.ErrorNotice, desktopErrorsEnabled, card, primary);
             Place(options, errors, px, 12, 36, 364, 28);
-            CheckBox reset = MakeToggle("Создать карточку заново", false, true, card, primary);
+            CheckBox reset = MakeToggle("Создать сводку заново", false, true, card, primary);
             if (showReset) Place(options, reset, px, 12, 64, 364, 28);
 
             Label state = new Label { ForeColor = secondary, TextAlign = ContentAlignment.MiddleLeft,

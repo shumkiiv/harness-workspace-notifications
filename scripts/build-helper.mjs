@@ -12,13 +12,12 @@ const soundPresets = ['boing.wav', 'squeak.wav', 'whistle.wav', 'pop.wav', 'scra
 const args = [
   '/nologo', '/target:winexe', '/langversion:5', '/codepage:65001',
   '/win32icon:' + icon, '/resource:' + icon + ',HarnessTasks.ico',
-  '/resource:' + path.join(root, 'assets', 'telegram', 'widget.html') + ',Telegram.widget.html',
   ...providerLogos.map(file => '/resource:' + path.join(root, 'assets', 'providers', file) + ',Providers.' + file),
   ...soundPresets.map(file => '/resource:' + path.join(root, 'assets', 'sounds', file) + ',Sounds.' + file),
   '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Web.Extensions.dll',
   '/out:' + path.join(native, 'DshNotifyGui.exe'),
   path.join(native, 'DshNotifyGui.cs'), path.join(native, 'DshNotifyGuiModern.cs'), path.join(native, 'Visuals.cs'), path.join(native, 'WidgetQuotaKeys.cs'),
-  path.join(native, 'ITelegramTransport.cs'), path.join(native, 'TelegramCredentials.cs'), path.join(native, 'TelegramCardPolicy.cs'), path.join(native, 'TelegramPublisher.cs'), path.join(native, 'TelegramSettingsUi.cs'), path.join(native, 'TelegramCardTests.cs')
+  path.join(native, 'ITelegramTransport.cs'), path.join(native, 'TelegramCredentials.cs'), path.join(native, 'TelegramCardPolicy.cs'), path.join(native, 'TelegramTextFormatter.cs'), path.join(native, 'TelegramPublisher.cs'), path.join(native, 'TelegramSettingsUi.cs'), path.join(native, 'TelegramCardTests.cs')
 ]
 
 const result = spawnSync(compiler, args, { stdio: 'inherit' })

@@ -1774,7 +1774,7 @@ public sealed class DshNotifyGui : Form
             output.AutoFlush = true;
         }
         Settings = new Settings();
-        telegramPublisher = new TelegramPublisher(new TelegramTransport(), ReadTelegramHtml(),
+        telegramPublisher = new TelegramPublisher(new TelegramTransport(),
             delegate(Action action) { System.Threading.ThreadPool.QueueUserWorkItem(delegate { action(); }); },
             delegate(Action action) { try { BeginInvoke(action); } catch { } },
             delegate { return DateTime.UtcNow; }, TelegramCredentialStore.Save);
@@ -2214,16 +2214,6 @@ public sealed class DshNotifyGui : Form
     {
         telegramSettings = changed;
         if (!String.IsNullOrEmpty(lastTelegramData)) telegramPublisher.Tick(lastTelegramData, TelegramPublisher.StableKey(lastTelegramData));
-    }
-
-    private static string ReadTelegramHtml()
-    {
-        try
-        {
-            using (Stream stream = typeof(DshNotifyGui).Assembly.GetManifestResourceStream("Telegram.widget.html"))
-            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8)) return reader.ReadToEnd();
-        }
-        catch { return String.Empty; }
     }
 
     private void StoreRows(Dictionary<string, object> message)

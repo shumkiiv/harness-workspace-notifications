@@ -8,7 +8,8 @@ using System.Web.Script.Serialization;
 internal interface ITelegramTransport
 {
     TelegramReply GetChat(string token, long chatId);
-    TelegramReply SendWidget(string token, long chatId, string html, string chatData);
+    TelegramReply SendSummary(string token, long chatId, string text);
+    TelegramReply EditText(string token, long chatId, int messageId, string text);
     TelegramReply EditMessageWidgetData(string token, long chatId, int messageId, string chatData);
     TelegramReply SendText(string token, long chatId, string text);
 }
@@ -18,6 +19,7 @@ internal sealed class TelegramReply
     internal bool Ok;
     internal bool MissingMessage;
     internal bool Uncertain;
+    internal bool NotModified;
     internal int RetryAfterSeconds;
     internal long ChatId;
     internal string ChatType;
@@ -39,10 +41,12 @@ internal sealed class TelegramTransport : ITelegramTransport
     }
 
     public TelegramReply GetChat(string token, long chatId) { return Call(token, "getChat", new Dictionary<string, object> { { "chat_id", chatId } }); }
-    public TelegramReply SendWidget(string token, long chatId, string html, string chatData)
+    public TelegramReply SendSummary(string token, long chatId, string text)
     {
-        return Call(token, "sendWidget", new Dictionary<string, object> { { "chat_id", chatId }, { "html", html }, { "chat_data", chatData }, { "disable_notification", true }, { "protect_content", true } });
+        return Call(token, "sendMessage", new Dictionary<string, object> { { "chat_id", chatId }, { "text", text }, { "disable_notification", true }, { "protect_content", true }, { "link_preview_options", new Dictionary<string, object> { { "is_disabled", true } } } });
     }
+    public TelegramReply EditText(string token, long chatId, int messageId, string text)
+    { return Call(token, "editMessageText", new Dictionary<string, object> { { "chat_id", chatId }, { "message_id", messageId }, { "text", text }, { "link_preview_options", new Dictionary<string, object> { { "is_disabled", true } } } }); }
     public TelegramReply EditMessageWidgetData(string token, long chatId, int messageId, string chatData)
     {
         return Call(token, "editMessageWidgetData", new Dictionary<string, object> { { "chat_id", chatId }, { "message_id", messageId }, { "chat_data", chatData } });
@@ -119,6 +123,7 @@ internal sealed class TelegramTransport : ITelegramTransport
                 reply.RetryAfterSeconds = Math.Max(0, (int)values["retry_after"]);
             string description = root.ContainsKey("description") ? root["description"] as string : null;
             reply.MissingMessage = rejected && statusCode == 400 && String.Equals(description, "Bad Request: message to edit not found", StringComparison.Ordinal);
+            reply.NotModified = rejected && statusCode == 400 && IsMessageNotModified(description);
             object result;
             if (reply.Ok && root.TryGetValue("result", out result) && (values = result as Dictionary<string, object>) != null)
             {
@@ -129,5 +134,14 @@ internal sealed class TelegramTransport : ITelegramTransport
             return reply;
         }
         catch { return reply; }
+    }
+    private static bool IsMessageNotModified(string description)
+    {
+        const string prefix = "Bad Request: ";
+        const string shortText = "message is not modified";
+        const string longText = "message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message";
+        if (String.IsNullOrEmpty(description) || !description.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        string detail = description.Substring(prefix.Length);
+        return String.Equals(detail, shortText, StringComparison.Ordinal) || String.Equals(detail, longText, StringComparison.Ordinal);
     }
 }
