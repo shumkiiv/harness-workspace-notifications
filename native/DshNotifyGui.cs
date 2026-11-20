@@ -317,7 +317,11 @@ public sealed class SettingsForm : Form
         preview.Click += delegate { if (previewSound != null) previewSound(SelectedSound()); };
         AddGeneralChoice(soundPreset, "notification-sound-preset", "Сигнал уведомления", ref top, preview);
         Button telegram = new Button { Text = "Настроить Telegram", AccessibleName = "Настроить Telegram", FlatStyle = FlatStyle.Flat, BackColor = Graphite.Card, ForeColor = Graphite.Primary, Enabled = telegramPublisher != null };
-        telegram.SetBounds(RowInset, top, 180, 24); telegram.Click += delegate { TelegramSettingsUi.Open(this, value.ShowNotifications && value.StatusError, telegramPublisher, telegramChanged); };
+        telegram.SetBounds(RowInset, top, 180, 24);
+        telegram.Click += delegate
+        {
+            TelegramSettingsUi.Open(this, value.ShowNotifications && value.StatusError, telegramPublisher, telegramChanged, WindowScaleFactor());
+        };
         Controls.Add(telegram); pages.Add(telegram, page); top += 28;
         page = 1; top = 72;
         Add("field-workspace", "Рабочая область", value.FieldWorkspace, ref top);
@@ -1855,7 +1859,10 @@ public sealed class DshNotifyGui : Form
         {
             ShowSettings();
         });
-        menu.Items.Add("Telegram", null, delegate { if (!demoMode) TelegramSettingsUi.Open(this, Settings.ShowNotifications && Settings.StatusError, telegramPublisher, TelegramChanged); });
+        menu.Items.Add("Telegram", null, delegate
+        {
+            if (!demoMode) TelegramSettingsUi.Open(this, Settings.ShowNotifications && Settings.StatusError, telegramPublisher, TelegramChanged, WidgetScaleFactor);
+        });
         tray.ContextMenuStrip = menu;
         tray.Visible = true;
     }
@@ -1870,7 +1877,7 @@ public sealed class DshNotifyGui : Form
         DragWindow(this, sender, eventArgs);
     }
 
-    private static void DragWindow(Form window, object sender, MouseEventArgs eventArgs)
+    internal static void DragWindow(Form window, object sender, MouseEventArgs eventArgs)
     {
         if (eventArgs.Button != MouseButtons.Left)
         {
