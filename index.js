@@ -6,6 +6,7 @@ import { openStore, normalizeSettings } from './src/store.mjs'
 import { launchHelper } from './src/helper.mjs'
 import { buildLimitsPayload } from './src/limits.mjs'
 import { createProviderUsageReaders } from './src/providerUsage.mjs'
+import { WidgetQuotaKeys } from './src/widgetQuotaKeys.mjs'
 import { setupQuotaBridge } from './src/quota/bridge.mjs'
 import { setupSessionOpenBridge } from './src/sessionOpen.mjs'
 
@@ -52,6 +53,7 @@ export function createRuntime(ctx, options = {}) {
   }
   if (typeof ctx.inject === 'function') bridgeScope = ctx.inject(['webServer', 'connection'], (scope) => attachBridge(scope))
   else attachBridge(ctx)
+  let quotaKeys
   const helper = (options.createHelper || launchHelper)({
     helperPath: options.helperPath || path.join(root, 'native', 'DshNotifyGui.exe'),
     dataDir: path.resolve(dataDir),
@@ -60,6 +62,7 @@ export function createRuntime(ctx, options = {}) {
     logger,
     onMessage: receive,
   })
+  quotaKeys = new WidgetQuotaKeys((message) => helper.send(message), { timeout: 17_000 })
   let timer
   let limitsTimer
   let accountBalanceCache = { at: 0, value: null, pending: null }
@@ -170,7 +173,8 @@ export function createRuntime(ctx, options = {}) {
       try { configurable = await llm.listConfigurableProviders?.() } catch { configurable = [] }
       if (!current()) return
       const usageReaders = await createProviderUsageReaders({ ctx, configurableProviders: configurable, current,
-        eligible: (id) => !closed && settings.ShowLimits === true && !settings.HiddenLimitProviders.includes(id), cache: providerUsageCache })
+        eligible: (id) => current() && !closed && settings.ShowLimits === true && !settings.HiddenLimitProviders.includes(id), cache: providerUsageCache,
+        widgetQuota: (id) => quotaKeys.read(id) })
       if (!current()) return
       const available = new Set(catalog.map((item) => item.id))
       for (const id of ['deepseek-official', 'zai']) {
@@ -208,6 +212,22 @@ export function createRuntime(ctx, options = {}) {
   }
 
   function receive(message) {
+    if (message?.t === 'ready') {
+      quotaKeys.receive(message)
+      if (settings.ShowLimits) void refreshLimits()
+      return
+    }
+    if (message?.t === 'quota.result') {
+      quotaKeys.receive(message)
+      return
+    }
+    if (message?.t === 'quota-key.changed' && typeof message.provider === 'string') {
+      limitsGeneration += 1
+      quotaKeys.invalidate(message.provider)
+      for (const key of providerUsageCache.keys()) if (key.startsWith(`${message.provider}\u0000`)) providerUsageCache.delete(key)
+      if (settings.ShowLimits) void refreshLimits()
+      return
+    }
     if (message?.t === 'settings.changed') {
       limitsGeneration += 1
       settings = normalizeSettings(message.settings)
@@ -312,6 +332,7 @@ export function createRuntime(ctx, options = {}) {
       closed = true
       clearInterval(timer)
       clearInterval(limitsTimer)
+      quotaKeys.close()
       bridge.close()
       sessionOpen.close()
       if (typeof bridgeScope === 'function') bridgeScope()

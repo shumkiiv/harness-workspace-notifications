@@ -84,6 +84,7 @@ async function request({ cache, key, eligible, resolve, fetchImpl, url, authoriz
   const cached = cache.get(key)
   if (cached?.pending) return cached.pending
   if (cached && clock - cached.at <= TTL_MS) return cached.value
+  const entry = { at: clock, value: null, pending: null }
   const pending = (async () => {
     try {
       const resolved = await resolve()
@@ -99,31 +100,53 @@ async function request({ cache, key, eligible, resolve, fetchImpl, url, authoriz
       } finally { clearTimeout(timeout) }
     } catch { return unavailableReason ? { unavailableReason: 'NO_RESPONSE' } : null }
   })()
-  cache.set(key, { at: clock, value: null, pending })
+  entry.pending = pending
+  cache.set(key, entry)
   const value = await pending
+  if (cache.get(key) !== entry) return value
+  if (!eligible()) {
+    cache.delete(key)
+    return null
+  }
   cache.set(key, { at: Date.now(), value, pending: null })
   return value
 }
 
-export async function createProviderUsageReaders({ ctx, configurableProviders, current = () => true, eligible = current, fetchImpl = globalThis.fetch, cache = new Map() } = {}) {
+function quotaOverride(id, value) {
+  if (value?.state === 'override') return (id === 'zai' ? usageResponse(value.payload) : amountResponse(value.payload)) || { unavailableReason: 'NO_RESPONSE' }
+  if (value?.state === 'rejected') return { unavailableReason: 'CREDENTIALS_REJECTED' }
+  if (value?.state === 'error') return { unavailableReason: 'NO_RESPONSE' }
+  return null
+}
+
+export async function createProviderUsageReaders({ ctx, configurableProviders, current = () => true, eligible = current, fetchImpl = globalThis.fetch, cache = new Map(), widgetQuota } = {}) {
   if (!ctx || !Array.isArray(configurableProviders) || typeof fetchImpl !== 'function') return {}
-  let descriptors
-  try { descriptors = await ctx.get?.('settings')?.describe?.({ redactSecrets: true }) } catch { return {} }
-  if (!Array.isArray(descriptors)) return {}
+  let descriptors = []
+  try { descriptors = await ctx.get?.('settings')?.describe?.({ redactSecrets: true }) } catch {}
+  if (!Array.isArray(descriptors)) descriptors = []
   const credentials = ctx.get?.('credentials')
-  if (!credentials || typeof credentials.resolve !== 'function') return {}
   const reader = (id, expectedBase, defaultRef, url, authorization, parse, overrideBase) => {
     const metadata = configurableProviders.filter((item) => item?.provider === id)
-    if (metadata.length !== 1 || !Array.isArray(metadata[0].settingsPath)) return null
-    const value = descriptor(descriptors, metadata[0], metadata[0].settingsPath)
+    const configured = metadata.length === 1 && Array.isArray(metadata[0].settingsPath)
+    const value = configured ? descriptor(descriptors, metadata[0], metadata[0].settingsPath) : undefined
     const unavailable = (reason) => async () => current() ? { unavailableReason: reason } : null
-    if (!value || typeof value !== 'object') return id === 'deepseek-official' ? unavailable('MISSING_CONFIG') : null
-    if (own(value, 'apiKeyEnv') && (typeof value.apiKeyEnv !== 'string' || !value.apiKeyEnv)) return id === 'deepseek-official' ? unavailable('MISSING_CONFIG') : null
-    const reference = own(value, 'apiKeyEnv') ? value.apiKeyEnv : defaultRef
-    const base = own(value, 'baseURL') ? value.baseURL : (overrideBase ?? metadata[0].defaultBaseURL ?? expectedBase)
-    if (!canonicalBase(base, expectedBase)) return id === 'deepseek-official' ? unavailable('UNRECOGNIZED_ORIGIN') : null
+    const keyRefValid = !value || typeof value !== 'object' ? false : !own(value, 'apiKeyEnv') || (typeof value.apiKeyEnv === 'string' && value.apiKeyEnv)
+    if ((!value || typeof value !== 'object' || !keyRefValid) && typeof widgetQuota !== 'function') return id === 'deepseek-official' ? unavailable('MISSING_CONFIG') : null
+    const reference = value && own(value, 'apiKeyEnv') ? value.apiKeyEnv : defaultRef
+    const base = value && own(value, 'baseURL') ? value.baseURL : (overrideBase ?? metadata[0]?.defaultBaseURL ?? expectedBase)
+    const fallbackAllowed = configured && value && typeof value === 'object' && keyRefValid && credentials && typeof credentials.resolve === 'function' && canonicalBase(base, expectedBase)
+    if (!fallbackAllowed && typeof widgetQuota !== 'function') return id === 'deepseek-official' ? unavailable('UNRECOGNIZED_ORIGIN') : null
     const key = `${id}\u0000${reference}\u0000${expectedBase}`
     return async () => {
+      if (!eligible(id)) return null
+      if (typeof widgetQuota === 'function') {
+        const widgetValue = await widgetQuota(id)
+        if (widgetValue?.state === 'pending') return null
+        const override = quotaOverride(id, widgetValue)
+        if (override || !current()) return current() ? override : null
+      }
+      if (!fallbackAllowed) return id === 'deepseek-official'
+        ? { unavailableReason: !value || typeof value !== 'object' || !keyRefValid ? 'MISSING_CONFIG' : 'UNRECOGNIZED_ORIGIN' } : null
       const result = await request({ cache, key, eligible: () => eligible(id), resolve: () => credentials.resolve(reference), fetchImpl, url, authorization, parse,
         unavailableReason: id === 'deepseek-official' })
       return current() ? result : null

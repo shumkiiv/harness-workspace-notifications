@@ -107,3 +107,27 @@ test('per-route cache deduplicates pending reads and drops a result after its ge
   active = false; resolveFetch()
   assert.equal(await first, null); assert.equal(await second, null)
 })
+
+test('widget quota projection precedes Harness credentials and a rejected widget key never falls back', async () => {
+  const ctx = context({ providers: [{ provider: 'deepseek-official', settingsNs: 'deep', settingsPath: [] }], settings: { deep: { baseURL: 'https://proxy.invalid' } } })
+  let fetches = 0
+  const readers = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers, widgetQuota: async () => ({ state: 'override', payload: {
+    balance_infos: [{ currency: 'USD', total_balance: '4.20', echoed: 'fictional-key' }],
+  } }), fetchImpl: async () => { fetches += 1; throw new Error('must not use fallback') } })
+  assert.deepEqual(await readers['deepseek-official'](), { amounts: [{ currency: 'USD', balance: '4.20', kind: 'wallet' }] })
+  assert.equal(fetches, 0)
+  const rejected = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers, widgetQuota: async () => ({ state: 'rejected' }) })
+  assert.deepEqual(await rejected['deepseek-official'](), { unavailableReason: 'CREDENTIALS_REJECTED' })
+  const failed = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers, widgetQuota: async () => ({ state: 'error' }) })
+  assert.deepEqual(await failed['deepseek-official'](), { unavailableReason: 'NO_RESPONSE' })
+  const malformed = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers, widgetQuota: async () => ({ state: 'override', payload: { balance_infos: [{ currency: 'USD', total_balance: 'fictional-key' }] } }) })
+  assert.deepEqual(await malformed['deepseek-official'](), { unavailableReason: 'NO_RESPONSE' })
+})
+
+test('pending widget key capability blocks fallback until helper identifies itself', async () => {
+  const ctx = context({ providers: [{ provider: 'zai', settingsNs: 'zai', settingsPath: ['providers', 'zai'] }], settings: { zai: { providers: { zai: { apiKeyEnv: 'ZAI' } } } }, credentials: { ZAI: { value: 'fictional' } } })
+  let fetches = 0
+  const readers = await createProviderUsageReaders({ ctx, configurableProviders: ctx.providers, widgetQuota: async () => ({ state: 'pending' }), fetchImpl: async () => { fetches += 1; return Response.json({}) } })
+  assert.equal(await readers.zai(), null)
+  assert.equal(fetches, 0)
+})

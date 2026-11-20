@@ -16,7 +16,7 @@ const args = [
   ...soundPresets.map(file => '/resource:' + path.join(root, 'assets', 'sounds', file) + ',Sounds.' + file),
   '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll',
   '/out:' + path.join(native, 'DshNotifyGui.exe'),
-  path.join(native, 'DshNotifyGui.cs'), path.join(native, 'Visuals.cs')
+  path.join(native, 'DshNotifyGui.cs'), path.join(native, 'Visuals.cs'), path.join(native, 'WidgetQuotaKeys.cs')
 ]
 
 const result = spawnSync(compiler, args, { stdio: 'inherit' })

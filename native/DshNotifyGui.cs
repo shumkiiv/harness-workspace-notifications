@@ -211,6 +211,8 @@ public sealed class SettingsForm : Form
     private readonly Dictionary<Control, int> pages = new Dictionary<Control, int>();
     private readonly ComboBox soundPreset = new ComboBox();
     private readonly ComboBox widgetScale = new ComboBox();
+    private readonly Action<string> quotaKeyChanged;
+    private readonly bool allowQuotaVault;
     private Panel contentPanel;
     private bool syncing;
     private int page;
@@ -218,10 +220,12 @@ public sealed class SettingsForm : Form
     public Button SaveButton { get; private set; }
 
     public SettingsForm(Settings current, Action<Settings> onChanged, List<Dictionary<string, object>> providers,
-        Action<string> previewSound = null)
+        Action<string> previewSound = null, Action<string> onQuotaKeyChanged = null, bool quotaVaultEnabled = true)
     {
         value = current;
         changed = onChanged;
+        quotaKeyChanged = onQuotaKeyChanged;
+        allowQuotaVault = quotaVaultEnabled;
         Text = "Настройки";
         FormBorderStyle = FormBorderStyle.None;
         SuspendLayout();
@@ -319,6 +323,9 @@ public sealed class SettingsForm : Form
         Add("status-unknown", "Состояние неизвестно", value.StatusUnknown, ref top);
         Add("status-disposed", "Сессия закрыта", value.StatusDisposed, ref top);
         page = 3; top = 72;
+        AddCaption("Ключи только для лимитов", ref top);
+        AddQuotaKeyButton("deepseek-official", "DeepSeek API", ref top);
+        AddQuotaKeyButton("zai", "Z.ai Coding", ref top);
         AddCaption("Показывать лимиты", ref top);
         foreach (Dictionary<string, object> provider in providers ?? new List<Dictionary<string, object>>())
         {
@@ -375,6 +382,20 @@ public sealed class SettingsForm : Form
     public CheckBox Check(string key)
     {
         return checks[key];
+    }
+
+    private void AddQuotaKeyButton(string provider, string label, ref int top)
+    {
+        Label caption = new Label { Text = label, ForeColor = Graphite.Primary, BackColor = Graphite.Base };
+        caption.SetBounds(RowInset, top + 3, 178, RowHeight);
+        Button button = new Button { Text = "Настроить", FlatStyle = FlatStyle.Flat, BackColor = Graphite.Card, ForeColor = Graphite.Primary,
+            Enabled = allowQuotaVault, AccessibleName = "Настроить ключ " + label };
+        button.FlatAppearance.BorderColor = Graphite.Border;
+        button.SetBounds(221, top, 132, 23);
+        button.Click += delegate { WidgetQuotaKeys.OpenDialog(provider, allowQuotaVault, quotaKeyChanged); };
+        Controls.Add(caption); pages.Add(caption, page);
+        Controls.Add(button); pages.Add(button, page);
+        top += 26;
     }
 
     public void UpdateLimitProviders(List<Dictionary<string, object>> providers)
@@ -1293,6 +1314,15 @@ public sealed class DshNotifyGui : Form
             StoreLimits(message);
             RenderWidget();
         }
+        else if (type == "quota.fetch")
+        {
+            string provider = TextOf(message, "provider");
+            string requestId = TextOf(message, "requestId");
+            WidgetQuotaKeys.FetchAsync(provider, requestId, demoMode, delegate(Dictionary<string, object> result)
+            {
+                try { BeginInvoke((Action)delegate { SendDictionary(result); }); } catch { }
+            });
+        }
         else if (type == "notice.show")
         {
             bool added = StoreNotice(message);
@@ -1959,7 +1989,8 @@ public sealed class DshNotifyGui : Form
 
     private void ShowSettings()
     {
-        SettingsForm form = new SettingsForm(Settings, UserChanged, availableLimitProviders, playNoticeSound);
+        SettingsForm form = new SettingsForm(Settings, UserChanged, availableLimitProviders, playNoticeSound,
+            delegate(string provider) { Send("quota-key.changed", "provider", provider); }, !demoMode);
         settingsForms.Add(form);
         form.FormClosed += delegate
         {
@@ -2053,6 +2084,13 @@ public sealed class DshNotifyGui : Form
         }
     }
 
+    private void SendDictionary(Dictionary<string, object> message)
+    {
+        string line = json.Serialize(message);
+        if (outputCallback != null) outputCallback(line);
+        else output.WriteLine(line);
+    }
+
 #if !NO_MAIN
     [STAThread]
     public static int Main(string[] arguments)
@@ -2065,7 +2103,7 @@ public sealed class DshNotifyGui : Form
         gui.DemoSettingsAfterApply = Array.IndexOf(arguments, "--demo-settings") >= 0;
         gui.HandleCreated += delegate
         {
-            gui.Send("ready");
+            gui.Send("ready", "quotaKeys", true);
             new System.Threading.Thread(new System.Threading.ThreadStart(delegate
             {
                 StreamReader input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
@@ -2107,7 +2145,7 @@ public sealed class DshNotifyGui : Form
         Settings settings = new Settings();
         SettingsForm form = new SettingsForm(settings, delegate(Settings changed) { }, new List<Dictionary<string, object>>());
         form.Check("field-time").Checked = false;
-        bool checkbox = !settings.FieldTime;
+        bool checkbox = !settings.FieldTime && WidgetQuotaKeys.SelfTest();
         bool soundDisabledByDefault = !settings.NotificationSound;
         form.Check("notice-sound").Checked = true;
         bool soundCheckbox = settings.NotificationSound;
