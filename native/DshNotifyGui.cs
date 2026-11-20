@@ -209,13 +209,17 @@ public sealed class SettingsForm : Form
     private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     private const int RowInset = 10;
     private const int RowHeight = 20;
+    private const int GeneralRowHeight = 24;
+    private const int GeneralValueLeft = 198;
+    private const int SettingsContentWidth = 382;
     private readonly Settings value;
     private readonly Action<Settings> changed;
     private readonly Dictionary<string, CheckBox> checks = new Dictionary<string, CheckBox>();
     private readonly Dictionary<Control, int> pages = new Dictionary<Control, int>();
-    private readonly ComboBox soundPreset = new ComboBox();
-    private readonly ComboBox widgetScale = new ComboBox();
-    private readonly ComboBox themeMode = new ComboBox();
+    private readonly ComboBox soundPreset = new SettingsChoice();
+    private readonly ComboBox widgetScale = new SettingsChoice();
+    private readonly ComboBox themeMode = new SettingsChoice();
+    private readonly List<Button> tabButtons = new List<Button>();
     private readonly Action<string> quotaKeyChanged;
     private readonly bool allowQuotaVault;
     private readonly Rectangle? layoutWorkingArea;
@@ -254,78 +258,42 @@ public sealed class SettingsForm : Form
         titleBar.MouseDown += DragCaption;
         Label title = new Label(); title.Text = "☷  Настройки"; title.ForeColor = Graphite.Primary; title.AutoSize = true; title.Location = new Point(10, 8); title.MouseDown += DragCaption;
         titleBar.Controls.Add(title); Controls.Add(titleBar);
-        Panel tabs = new Panel(); tabs.BackColor = Graphite.Base; tabs.SetBounds(8, 36, 374, 28); tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        Panel tabs = new Panel(); tabs.BackColor = Graphite.Base; tabs.SetBounds(8, 36, SettingsContentWidth, 28); tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         string[] tabNames = new string[] { "Общие", "Карточки", "Состояния", "Лимиты" };
         for (int tabIndex = 0; tabIndex < tabNames.Length; tabIndex++)
         {
             Button tab = new Button(); int selected = tabIndex;
-            tab.Text = tabNames[tabIndex]; tab.AccessibleName = tabNames[tabIndex]; tab.SetBounds(tabIndex * 92, 1, 88, 25);
-            tab.FlatStyle = FlatStyle.Flat; tab.FlatAppearance.BorderColor = Graphite.Border; tab.BackColor = tabIndex == 0 ? Graphite.Card : Graphite.Base; tab.ForeColor = Graphite.Primary;
+            tab.Text = tabNames[tabIndex]; tab.AccessibleName = tabNames[tabIndex]; tab.SetBounds(tabIndex * 96, 1, 92, 25);
+            tab.FlatStyle = FlatStyle.Flat;
             tab.Click += delegate { ShowPage(selected); };
             tabs.Controls.Add(tab);
+            tabButtons.Add(tab);
         }
         Controls.Add(tabs);
         int top = 72;
         page = 0;
-        Add("show-widget", "Показывать виджет", value.ShowWidget, ref top);
-        Add("show-notices", "Показывать уведомления", value.ShowNotifications, ref top);
-        Add("notice-sound", "Звук уведомлений", value.NotificationSound, ref top);
-        soundPreset.Name = "notification-sound-preset";
-        soundPreset.AccessibleName = "Сигнал уведомления";
-        soundPreset.DropDownStyle = ComboBoxStyle.DropDownList;
-        soundPreset.FlatStyle = FlatStyle.Flat;
-        soundPreset.BackColor = Graphite.Card;
-        soundPreset.ForeColor = Graphite.Primary;
-        soundPreset.DrawMode = DrawMode.OwnerDrawFixed;
-        soundPreset.DrawItem += PaintSoundPreset;
+        AddCaption("Виджет", ref top);
+        Add("show-widget", "Показывать виджет", value.ShowWidget, ref top, GeneralRowHeight);
+        Add("widget-topmost", "Поверх остальных окон", value.WidgetTopMost, ref top, GeneralRowHeight);
+        Add("compact-widget", "Компактный вид", value.CompactWidget, ref top, GeneralRowHeight);
+        Add("compact-workspace-list", "Короткий список областей", value.CompactWorkspaceList, ref top, GeneralRowHeight);
+        Add("show-limits", "Показывать лимиты ИИ", value.ShowLimits, ref top, GeneralRowHeight);
+        widgetScale.Items.AddRange(new object[] { "Маленький (85%)", "Средний (100%)", "Большой (125%)" });
+        widgetScale.SelectedIndex = value.WidgetScale == "small" ? 0 : (value.WidgetScale == "large" ? 2 : 1);
+        AddGeneralChoice(widgetScale, "widget-scale", "Масштаб виджета", ref top);
+        themeMode.Items.AddRange(new object[] { "Как в Windows", "Светлая", "Тёмная" });
+        themeMode.SelectedIndex = ThemeIndex(value.Theme);
+        AddGeneralChoice(themeMode, "theme-mode", "Тема", ref top);
+        AddCaption("Уведомления", ref top);
+        Add("show-notices", "Показывать уведомления", value.ShowNotifications, ref top, GeneralRowHeight);
+        Add("subagent-notices", "Уведомления субагентов", value.SubagentNotices, ref top, GeneralRowHeight);
+        Add("notice-sound", "Звук уведомлений", value.NotificationSound, ref top, GeneralRowHeight);
         soundPreset.DisplayMember = "Value";
         soundPreset.Items.AddRange(NotificationSounds.Presets.Cast<object>().ToArray());
         soundPreset.SelectedIndex = NotificationSounds.IndexOf(value.NotificationSoundPreset);
-        soundPreset.SetBounds(RowInset, top, 199, 23);
-        soundPreset.SelectedIndexChanged += delegate { Save(); };
-        Controls.Add(soundPreset);
-        pages.Add(soundPreset, page);
-        Button preview = new Button { Text = "Прослушать звук", FlatStyle = FlatStyle.Flat, Enabled = previewSound != null,
-            ForeColor = Graphite.Primary, BackColor = Graphite.Card };
-        preview.FlatAppearance.BorderColor = Graphite.Border;
-        preview.SetBounds(221, top, 132, 23);
+        Button preview = new Button { Text = "▶", AccessibleName = "Прослушать звук", FlatStyle = FlatStyle.Flat, Enabled = previewSound != null };
         preview.Click += delegate { if (previewSound != null) previewSound(SelectedSound()); };
-        Controls.Add(preview);
-        pages.Add(preview, page);
-        top += 26;
-        widgetScale.Name = "widget-scale";
-        widgetScale.AccessibleName = "Масштаб виджета";
-        widgetScale.DropDownStyle = ComboBoxStyle.DropDownList;
-        widgetScale.FlatStyle = FlatStyle.Flat;
-        widgetScale.BackColor = Graphite.Card;
-        widgetScale.ForeColor = Graphite.Primary;
-        widgetScale.Items.AddRange(new object[] { "Маленький (85%)", "Средний (100%)", "Большой (125%)" });
-        widgetScale.SelectedIndex = value.WidgetScale == "small" ? 0 : (value.WidgetScale == "large" ? 2 : 1);
-        widgetScale.SetBounds(RowInset, top, 199, 23);
-        widgetScale.SelectedIndexChanged += delegate { Save(); };
-        Label scaleLabel = new Label { Text = "Масштаб виджета", ForeColor = Graphite.Secondary, BackColor = Graphite.Base };
-        scaleLabel.SetBounds(218, top + 3, 130, 18);
-        Controls.Add(scaleLabel); pages.Add(scaleLabel, page);
-        Controls.Add(widgetScale); pages.Add(widgetScale, page); top += 26;
-        Add("subagent-notices", "Уведомления субагентов", value.SubagentNotices, ref top);
-        Add("compact-widget", "Компактный вид", value.CompactWidget, ref top);
-        Add("widget-topmost", "Поверх остальных окон", value.WidgetTopMost, ref top);
-        Add("compact-workspace-list", "Короткий список областей: имя и состояние", value.CompactWorkspaceList, ref top);
-        themeMode.Name = "theme-mode";
-        themeMode.AccessibleName = "Тема";
-        themeMode.DropDownStyle = ComboBoxStyle.DropDownList;
-        themeMode.FlatStyle = FlatStyle.Flat;
-        themeMode.BackColor = Graphite.Card;
-        themeMode.ForeColor = Graphite.Primary;
-        themeMode.Items.AddRange(new object[] { "Как в Windows", "Светлая", "Тёмная" });
-        themeMode.SelectedIndex = ThemeIndex(value.Theme);
-        themeMode.SetBounds(RowInset, top, 199, 23);
-        themeMode.SelectedIndexChanged += delegate { Save(); };
-        Label themeLabel = new Label { Text = "Тема", ForeColor = Graphite.Secondary, BackColor = Graphite.Base };
-        themeLabel.SetBounds(218, top + 3, 130, 18);
-        Controls.Add(themeLabel); pages.Add(themeLabel, page);
-        Controls.Add(themeMode); pages.Add(themeMode, page); top += 26;
-        Add("show-limits", "Лимиты ИИ в окне „Задачи“", value.ShowLimits, ref top);
+        AddGeneralChoice(soundPreset, "notification-sound-preset", "Сигнал уведомления", ref top, preview);
         page = 1; top = 72;
         Add("field-workspace", "Рабочая область", value.FieldWorkspace, ref top);
         Add("field-task", "Задача", value.FieldTask, ref top);
@@ -359,8 +327,7 @@ public sealed class SettingsForm : Form
         }
         SaveButton = new Button();
         SaveButton.Text = "Готово";
-        SaveButton.Top = 290;
-        SaveButton.Left = 292;
+        SaveButton.SetBounds(296, 290, 84, 26);
         SaveButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
         SaveButton.FlatStyle = FlatStyle.Flat;
         SaveButton.BackColor = Graphite.Card;
@@ -384,7 +351,7 @@ public sealed class SettingsForm : Form
         MinimumSize = new Size(360, 280);
         AutoScroll = false;
         contentPanel = new Panel();
-        contentPanel.SetBounds(8, 64, 382, 218);
+        contentPanel.SetBounds(8, 64, SettingsContentWidth, 218);
         contentPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         contentPanel.AutoScroll = false;
         contentPanel.BackColor = Graphite.Card;
@@ -401,6 +368,7 @@ public sealed class SettingsForm : Form
         ShowPage(0);
         ResumeLayout(true);
         ApplyOwnPalette(this);
+        StyleTabs();
         CaptureScaleBaseline(this);
         ApplyWindowScale();
     }
@@ -472,6 +440,7 @@ public sealed class SettingsForm : Form
         checks["compact-widget"].Checked = value.CompactWidget;
         syncing = false;
         ApplyOwnPalette(this);
+        StyleTabs();
         ApplyWindowScale();
     }
 
@@ -480,7 +449,11 @@ public sealed class SettingsForm : Form
         Panel panel = control as Panel;
         if (panel != null) panel.BackColor = Graphite.Card;
         Label label = control as Label;
-        if (label != null) label.ForeColor = Graphite.Primary;
+        if (label != null)
+        {
+            label.BackColor = Graphite.Card;
+            label.ForeColor = label.Name == "settings-section" ? Graphite.Accent("running") : Graphite.Primary;
+        }
         Button button = control as Button;
         if (button != null) { button.BackColor = Graphite.Card; button.ForeColor = Graphite.Primary; button.FlatAppearance.BorderColor = Graphite.Border; }
         CheckBox check = control as CheckBox;
@@ -497,12 +470,36 @@ public sealed class SettingsForm : Form
         SendMessage(Handle, 0x00A1, new IntPtr(2), IntPtr.Zero);
     }
 
-    private void Add(string key, string text, bool selected, ref int top)
+    private void AddGeneralChoice(ComboBox combo, string name, string text, ref int top, Button action = null)
+    {
+        int right = SettingsContentWidth - RowInset;
+        int width = right - GeneralValueLeft;
+        Label label = new Label { Text = text, TextAlign = ContentAlignment.MiddleLeft, UseMnemonic = false };
+        label.SetBounds(RowInset, top, GeneralValueLeft - RowInset * 2, GeneralRowHeight);
+        combo.Name = name;
+        combo.AccessibleName = text;
+        combo.DropDownStyle = ComboBoxStyle.DropDownList;
+        combo.FlatStyle = FlatStyle.Flat;
+        combo.DrawMode = DrawMode.OwnerDrawFixed;
+        combo.DrawItem += PaintChoice;
+        combo.SetBounds(GeneralValueLeft, top + 1, action == null ? width : width - 36, GeneralRowHeight - 2);
+        combo.SelectedIndexChanged += delegate { Save(); };
+        Controls.Add(label); pages.Add(label, page);
+        Controls.Add(combo); pages.Add(combo, page);
+        if (action != null)
+        {
+            action.SetBounds(right - 30, top + 1, 30, GeneralRowHeight - 2);
+            Controls.Add(action); pages.Add(action, page);
+        }
+        top += GeneralRowHeight;
+    }
+
+    private void Add(string key, string text, bool selected, ref int top, int rowHeight = RowHeight)
     {
         CheckBox check = new CheckBox();
         check.Text = text;
         check.Checked = selected;
-        check.SetBounds(RowInset, top, 1, RowHeight);
+        check.SetBounds(RowInset, top, 1, rowHeight);
         check.TextAlign = ContentAlignment.MiddleLeft;
         check.CheckAlign = ContentAlignment.MiddleRight;
         check.FlatStyle = FlatStyle.Flat;
@@ -515,16 +512,18 @@ public sealed class SettingsForm : Form
         checks.Add(key, check);
         pages[check] = page;
         if (contentPanel == null) Controls.Add(check); else contentPanel.Controls.Add(check);
-        top += RowHeight;
+        top += rowHeight;
     }
 
     private void AddCaption(string text, ref int top)
     {
         Label caption = new Label();
+        caption.Name = "settings-section";
         caption.Text = text;
-        caption.ForeColor = Graphite.Running;
+        caption.TextAlign = ContentAlignment.MiddleLeft;
+        caption.ForeColor = Graphite.Accent("running");
         caption.Font = new Font("Segoe UI", 8.25F, FontStyle.Bold);
-        caption.Left = 10;
+        caption.Left = RowInset;
         caption.Top = top;
         caption.Width = 280;
         caption.Height = 20;
@@ -664,7 +663,8 @@ public sealed class SettingsForm : Form
     private void FitRows()
     {
         int inset = (int)Math.Round(RowInset * WindowScaleFactor());
-        int width = Math.Max(1, contentPanel.ClientSize.Width - inset * 2);
+        int right = (int)Math.Round((SettingsContentWidth - RowInset) * WindowScaleFactor());
+        int width = Math.Max(1, Math.Min(right, contentPanel.ClientSize.Width - inset) - inset);
         foreach (CheckBox row in checks.Values) row.Width = width;
     }
 
@@ -672,8 +672,21 @@ public sealed class SettingsForm : Form
     {
         if (page != selected) limitProviderPage = 0;
         page = selected;
+        StyleTabs();
         foreach (KeyValuePair<Control, int> item in pages) item.Key.Visible = item.Value == selected;
         FitToVisibleContent();
+    }
+
+    private void StyleTabs()
+    {
+        for (int index = 0; index < tabButtons.Count; index++)
+        {
+            bool selected = index == page;
+            Button tab = tabButtons[index];
+            tab.BackColor = selected ? Graphite.ChipFill("running") : Graphite.Card;
+            tab.ForeColor = selected ? Graphite.Accent("running") : Graphite.Primary;
+            tab.FlatAppearance.BorderColor = selected ? Graphite.Accent("running") : Graphite.Border;
+        }
     }
 
     private void Save()
@@ -739,8 +752,10 @@ public sealed class SettingsForm : Form
 
     private static Rectangle ScaleRectangle(Rectangle rectangle, float factor)
     {
-        return new Rectangle((int)Math.Round(rectangle.X * factor), (int)Math.Round(rectangle.Y * factor),
-            Math.Max(1, (int)Math.Round(rectangle.Width * factor)), Math.Max(1, (int)Math.Round(rectangle.Height * factor)));
+        int left = (int)Math.Round(rectangle.Left * factor);
+        int top = (int)Math.Round(rectangle.Top * factor);
+        return new Rectangle(left, top, Math.Max(1, (int)Math.Round(rectangle.Right * factor) - left),
+            Math.Max(1, (int)Math.Round(rectangle.Bottom * factor) - top));
     }
 
     private void ApplyWindowScale()
@@ -791,15 +806,54 @@ public sealed class SettingsForm : Form
         return soundPreset.SelectedIndex < 0 ? NotificationSounds.DefaultId : NotificationSounds.Presets[soundPreset.SelectedIndex].Key;
     }
 
-    private void PaintSoundPreset(object sender, DrawItemEventArgs args)
+    private void PaintChoice(object sender, DrawItemEventArgs args)
     {
         bool highlighted = (args.State & (DrawItemState.Selected | DrawItemState.ComboBoxEdit)) == DrawItemState.Selected;
         using (Brush fill = new SolidBrush(highlighted ? Graphite.Border : Graphite.Card))
             args.Graphics.FillRectangle(fill, args.Bounds);
         if (args.Index < 0) return;
         Rectangle text = Rectangle.Inflate(args.Bounds, -4, 0);
-        TextRenderer.DrawText(args.Graphics, NotificationSounds.Presets[args.Index].Value, args.Font, text,
+        ComboBox combo = (ComboBox)sender;
+        TextRenderer.DrawText(args.Graphics, combo.GetItemText(combo.Items[args.Index]), args.Font, text,
             Graphite.Primary, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
+    }
+
+    private sealed class SettingsChoice : ComboBox
+    {
+        protected override void WndProc(ref Message message)
+        {
+            base.WndProc(ref message);
+            const int PaintMessage = 0x000F;
+            const int PrintMessage = 0x0317;
+            const int PrintClientMessage = 0x0318;
+            if (message.Msg == PaintMessage && IsHandleCreated)
+            {
+                using (Graphics graphics = Graphics.FromHwnd(Handle)) PaintFrame(graphics);
+            }
+            else if ((message.Msg == PrintMessage || message.Msg == PrintClientMessage) && message.WParam != IntPtr.Zero)
+            {
+                using (Graphics graphics = Graphics.FromHdc(message.WParam)) PaintFrame(graphics);
+            }
+        }
+
+        private void PaintFrame(Graphics graphics)
+        {
+            Rectangle area = ClientRectangle;
+            if (area.Width < 4 || area.Height < 4) return;
+            int arrowWidth = Math.Min(area.Width - 3, SystemInformation.VerticalScrollBarWidth);
+            var arrow = new Rectangle(area.Right - arrowWidth - 1, 1, arrowWidth, area.Height - 2);
+            using (Brush fill = new SolidBrush(Graphite.Base)) graphics.FillRectangle(fill, arrow);
+            int x = arrow.Left + arrow.Width / 2;
+            int y = arrow.Top + arrow.Height / 2;
+            using (Pen mark = new Pen(Graphite.Secondary))
+                graphics.DrawLines(mark, new Point[] { new Point(x - 3, y - 1), new Point(x, y + 2), new Point(x + 3, y - 1) });
+            using (Pen border = new Pen(Focused ? Graphite.Accent("running") : Graphite.Border))
+            {
+                graphics.DrawRectangle(border, 0, 0, area.Width - 1, area.Height - 1);
+                graphics.DrawRectangle(border, 1, 1, area.Width - 3, area.Height - 3);
+                graphics.DrawLine(border, arrow.Left - 1, 1, arrow.Left - 1, area.Height - 2);
+            }
+        }
     }
 }
 

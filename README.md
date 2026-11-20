@@ -46,7 +46,7 @@
 | --- | --- | --- |
 | ![Мелкий виджет с вымышленными задачами](docs/screenshots/widget-small-light.png) | ![Средний виджет с вымышленными задачами](docs/screenshots/widget-medium-light.png) | ![Крупный виджет с вымышленными задачами](docs/screenshots/widget-large-light.png) |
 
-[Мелкая сводка](docs/screenshots/widget-summary-small-dark.png) · [Средняя сводка](docs/screenshots/widget-summary-dark.png) · [Крупная сводка](docs/screenshots/widget-summary-large-dark.png) · [Настройки масштаба](docs/screenshots/settings-size-light.png)
+[Мелкая сводка](docs/screenshots/widget-summary-small-dark.png) · [Средняя сводка](docs/screenshots/widget-summary-dark.png) · [Крупная сводка](docs/screenshots/widget-summary-large-dark.png) · [Настройки в светлой теме](docs/screenshots/settings-size-light.png) · [Настройки в тёмной теме](docs/screenshots/settings-general-dark.png)
 
 ## Лимиты ИИ
 
