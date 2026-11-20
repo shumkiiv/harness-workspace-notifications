@@ -18,6 +18,19 @@ function fakeChild() {
   return child
 }
 
+test('helper supplies both Harness process identifiers without enabling a shell', async () => {
+  const child = fakeChild()
+  let invocation
+  const helper = launchHelper({
+    helperPath: 'fixture', dataDir: 'C:/fixture', logger: { warn() {} },
+    spawnProcess(path, args, options) { invocation = { path, args, options }; return child },
+  })
+  assert.equal(invocation.options.shell, false)
+  assert.equal(invocation.options.env.DSH_WN_HOST_PID, String(process.pid))
+  assert.equal(invocation.options.env.DSH_WN_DESKTOP_PID, String(process.ppid))
+  await helper.close()
+})
+
 test('paused transport keeps the latest widget until drain', async () => {
   const child = fakeChild()
   const writes = []

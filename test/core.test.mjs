@@ -43,6 +43,14 @@ test('interface style defaults to classic and only accepts the opt-in modern val
   assert.equal(normalizeSettings({ InterfaceStyle: 'classic' }).InterfaceStyle, 'classic')
 })
 
+test('Harness-open completed notice hiding defaults off and validates its boolean setting', () => {
+  assert.equal(DEFAULT_SETTINGS.HideCompletedWhenHarnessOpen, false)
+  assert.equal(normalizeSettings({}).HideCompletedWhenHarnessOpen, false)
+  assert.equal(normalizeSettings({ HideCompletedWhenHarnessOpen: true }).HideCompletedWhenHarnessOpen, true)
+  assert.equal(normalizeSettings({ HideCompletedWhenHarnessOpen: 'true' }).HideCompletedWhenHarnessOpen, false)
+  assert.equal(normalizeSettings({ HideCompletedWhenHarnessOpen: 1 }).HideCompletedWhenHarnessOpen, false)
+})
+
 test('notifies exactly once for an active baseline and ignores closed history', () => {
   const active = new Tracker({ turnBoundaryOf: () => ({ lastTurn: 7, openTurnStartSeq: 4 }) })
   active.observe({ id: 'active', header: {} })

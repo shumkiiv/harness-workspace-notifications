@@ -28,7 +28,12 @@ export function launchHelper({ helperPath, dataDir, demo = false, demoArgs = [],
   try {
     child = spawnProcess(helperPath, demo ? ['--demo', ...demoArgs] : [], {
       shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-      ...(dataDir ? { env: { ...process.env, DSH_WN_DATA_DIR: dataDir } } : {}),
+      env: {
+        ...process.env,
+        DSH_WN_HOST_PID: String(process.pid),
+        DSH_WN_DESKTOP_PID: String(process.ppid),
+        ...(dataDir ? { DSH_WN_DATA_DIR: dataDir } : {}),
+      },
     })
   } catch (error) {
     warn(`Графическое окно недоступно: ${error.message}`)

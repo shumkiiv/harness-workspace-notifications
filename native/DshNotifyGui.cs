@@ -92,6 +92,7 @@ public class Settings
     public bool ShowWidget { get; set; }
     public bool ShowNotifications { get; set; }
     public bool NotificationSound { get; set; }
+    public bool HideCompletedWhenHarnessOpen { get; set; }
     public string NotificationSoundPreset { get; set; }
     public bool SubagentNotices { get; set; }
     public bool FieldWorkspace { get; set; }
@@ -302,6 +303,7 @@ public sealed class SettingsForm : Form
         AddGeneralChoice(interfaceStyle, "interface-style", "Интерфейс", ref top);
         AddCaption("Уведомления", ref top);
         Add("show-notices", "Показывать уведомления", value.ShowNotifications, ref top, GeneralRowHeight);
+        Add("hide-completed-harness-open", "Скрывать завершённые при открытом Harness", value.HideCompletedWhenHarnessOpen, ref top, GeneralRowHeight);
         Add("subagent-notices", "Уведомления субагентов", value.SubagentNotices, ref top, GeneralRowHeight);
         Add("notice-sound", "Звук уведомлений", value.NotificationSound, ref top, GeneralRowHeight);
         soundPreset.DisplayMember = "Value";
@@ -774,6 +776,7 @@ public sealed class SettingsForm : Form
         bool wasCompactWorkspaceList = value.CompactWorkspaceList;
         value.ShowWidget = checks["show-widget"].Checked;
         value.ShowNotifications = checks["show-notices"].Checked;
+        value.HideCompletedWhenHarnessOpen = checks["hide-completed-harness-open"].Checked;
         value.NotificationSound = checks["notice-sound"].Checked;
         value.NotificationSoundPreset = SelectedSound();
         value.WidgetScale = widgetScale.SelectedIndex == 0 ? "small" : (widgetScale.SelectedIndex == 2 ? "large" : "medium");
@@ -1409,6 +1412,102 @@ public sealed class LimitsPanel : Control
     }
 }
 
+internal static class HarnessWindowProbe
+{
+    private const string HarnessProcessName = "DeepSeek Harness";
+    private const int GwOwner = 4;
+    private const int GwlExStyle = -20;
+    private const long WsExToolWindow = 0x00000080L;
+    private const int DwmwaCloaked = 14;
+
+    private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern IntPtr GetWindow(IntPtr window, int command);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", ExactSpelling = true)]
+    private static extern int GetWindowLong(IntPtr window, int index);
+    [DllImport("dwmapi.dll", ExactSpelling = true)]
+    private static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+
+    internal static bool IsHarnessWindowOpen()
+    {
+        try
+        {
+            HashSet<uint> candidates = CandidateProcessIds();
+            if (candidates.Count == 0) return false;
+            bool found = false;
+            if (!EnumWindows(delegate(IntPtr window, IntPtr parameter)
+            {
+                uint processId;
+                GetWindowThreadProcessId(window, out processId);
+                if (candidates.Contains(processId) && IsTopLevelVisibleWindow(window)) found = true;
+                return true;
+            }, IntPtr.Zero)) return false;
+            return found;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static HashSet<uint> CandidateProcessIds()
+    {
+        HashSet<uint> result = new HashSet<uint>();
+        AddCandidate(result, Environment.GetEnvironmentVariable("DSH_WN_HOST_PID"));
+        AddCandidate(result, Environment.GetEnvironmentVariable("DSH_WN_DESKTOP_PID"));
+        return result;
+    }
+
+    private static void AddCandidate(HashSet<uint> result, string value)
+    {
+        int processId;
+        Process process = null;
+        if (!Int32.TryParse(value, out processId) || processId <= 0) return;
+        try
+        {
+            process = Process.GetProcessById(processId);
+            if (String.Equals(process.ProcessName, HarnessProcessName, StringComparison.Ordinal)) result.Add((uint)processId);
+        }
+        catch
+        {
+        }
+        finally
+        {
+            if (process != null) process.Dispose();
+        }
+    }
+
+    private static bool IsTopLevelVisibleWindow(IntPtr window)
+    {
+        if (!IsWindowVisible(window) || IsIconic(window) || GetWindow(window, GwOwner) != IntPtr.Zero) return false;
+        if ((GetWindowLong(window, GwlExStyle) & WsExToolWindow) != 0) return false;
+        try
+        {
+            int cloaked;
+            if (DwmGetWindowAttribute(window, DwmwaCloaked, out cloaked, Marshal.SizeOf(typeof(int))) == 0 && cloaked != 0) return false;
+        }
+        catch (DllNotFoundException)
+        {
+        }
+        catch (EntryPointNotFoundException)
+        {
+        }
+        return true;
+    }
+}
+
 public sealed class DshNotifyGui : Form
 {
     private const string DshOpenUrl = "dsh://open";
@@ -1420,8 +1519,11 @@ public sealed class DshNotifyGui : Form
     private const int DefaultQuotaHeight = 120;
     private const int NoticeStackWidth = 352;
     private const int NoticeStackHeightLimit = 420;
+    private const int HarnessProbeIntervalMilliseconds = 500;
     private const int NonClientLeftButtonDown = 0x00A1;
     private readonly Action<string> playNoticeSound;
+    private readonly Func<bool> harnessOpenProbe;
+    private readonly Timer harnessNoticeTimer = new Timer();
     private const int CaptionHit = 2;
 
     [DllImport("user32.dll")]
@@ -1470,6 +1572,9 @@ public sealed class DshNotifyGui : Form
     private static readonly Font NoticeTaskFont = new Font("Segoe UI", 9F, FontStyle.Regular);
     private bool widgetUserMoving;
     private bool noticesManuallyHidden;
+    private bool completedNoticesHiddenByHarness;
+    internal int NoticeRenderCountForTest { get; private set; }
+    internal bool HarnessNoticeTimerEnabledForTest { get { return harnessNoticeTimer.Enabled; } }
     private bool isShuttingDown;
     private bool lastShowWidget = true;
     private bool lastShowNotifications = true;
@@ -1532,16 +1637,26 @@ public sealed class DshNotifyGui : Form
     }
 
     internal DshNotifyGui(bool demo, Action<string> callback, Action<string> sound)
+        : this(demo, callback, sound, null)
+    {
+    }
+
+    internal DshNotifyGui(bool demo, Action<string> outputCallback, Action<string> sound, Func<bool> harnessOpenProbe)
     {
         demoMode = demo;
         playNoticeSound = sound;
-        outputCallback = callback;
-        if (outputCallback == null)
+        if (harnessOpenProbe != null) this.harnessOpenProbe = harnessOpenProbe;
+        else if (demo) this.harnessOpenProbe = delegate { return false; };
+        else this.harnessOpenProbe = HarnessWindowProbe.IsHarnessWindowOpen;
+        this.outputCallback = outputCallback;
+        if (this.outputCallback == null)
         {
             output = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
             output.AutoFlush = true;
         }
         Settings = new Settings();
+        harnessNoticeTimer.Interval = HarnessProbeIntervalMilliseconds;
+        harnessNoticeTimer.Tick += delegate { RefreshHarnessNoticeSuppressionFromTimer(); };
         Text = (demo ? "[ДЕМО] " : "") + "Задачи";
         Icon = TaskIcon.Window;
         FormBorderStyle = FormBorderStyle.None;
@@ -1767,6 +1882,8 @@ public sealed class DshNotifyGui : Form
     {
         if (disposing)
         {
+            harnessNoticeTimer.Stop();
+            harnessNoticeTimer.Dispose();
             tray.Visible = false;
             tray.Dispose();
             if (!stack.IsDisposed)
@@ -1929,7 +2046,9 @@ public sealed class DshNotifyGui : Form
         }
         else if (type == "notice.show")
         {
+            if (SuppressNewCompletedNotice(message)) return;
             bool added = StoreNotice(message);
+            RefreshHarnessNoticeSuppression();
             RenderNotices();
             if (Settings.ShowNotifications && !noticesManuallyHidden)
             {
@@ -2090,6 +2209,7 @@ public sealed class DshNotifyGui : Form
 
     private void Render()
     {
+        RefreshHarnessNoticeSuppression();
         RenderWidget();
         RenderNotices();
     }
@@ -2142,6 +2262,71 @@ public sealed class DshNotifyGui : Form
         return String.Equals(status, "completed", StringComparison.OrdinalIgnoreCase);
     }
 
+    private bool HasRetainedCompletedNotice()
+    {
+        return noticeOrder.Any(id => notices.ContainsKey(id) && IsCompleted(StatusOf(notices[id])));
+    }
+
+    private bool ShouldHideCompletedNotices()
+    {
+        if (!Settings.HideCompletedWhenHarnessOpen || !Settings.ShowNotifications || !HasRetainedCompletedNotice()) return false;
+        try
+        {
+            return harnessOpenProbe();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void UpdateHarnessNoticeTimer()
+    {
+        if (Settings.HideCompletedWhenHarnessOpen && Settings.ShowNotifications && HasRetainedCompletedNotice())
+        {
+            if (!harnessNoticeTimer.Enabled) harnessNoticeTimer.Start();
+        }
+        else
+        {
+            harnessNoticeTimer.Stop();
+        }
+    }
+
+    private bool RefreshHarnessNoticeSuppression()
+    {
+        bool hidden = ShouldHideCompletedNotices();
+        bool changed = hidden != completedNoticesHiddenByHarness;
+        completedNoticesHiddenByHarness = hidden;
+        UpdateHarnessNoticeTimer();
+        return changed;
+    }
+
+    private void RefreshHarnessNoticeSuppressionFromTimer()
+    {
+        if (!RefreshHarnessNoticeSuppression()) return;
+        RenderNotices();
+        if (!completedNoticesHiddenByHarness && !noticesManuallyHidden) ShowNotices();
+    }
+
+    private bool SuppressNewCompletedNotice(Dictionary<string, object> message)
+    {
+        if (!Settings.HideCompletedWhenHarnessOpen || !IsCompleted(StatusOf(message))) return false;
+        bool open;
+        try
+        {
+            open = harnessOpenProbe();
+        }
+        catch
+        {
+            open = false;
+        }
+        if (!open) return false;
+        string id = TextOf(message, "id");
+        if (!String.IsNullOrEmpty(id) && notices.ContainsKey(id)) return false;
+        if (!String.IsNullOrEmpty(id)) Send("notice.closed", "id", id);
+        return true;
+    }
+
     private static void ClearCards(Control container)
     {
         while (container.Controls.Count > 0)
@@ -2154,6 +2339,7 @@ public sealed class DshNotifyGui : Form
 
     private void RenderNotices()
     {
+        NoticeRenderCountForTest++;
         int firstItem = cards.FirstIndex;
         cards.SuspendLayout();
         try
@@ -2164,7 +2350,7 @@ public sealed class DshNotifyGui : Form
             foreach (string id in completed.Concat(other))
             {
                 Dictionary<string, object> notice = notices[id];
-                if (IsVisible(StatusOf(notice))) cards.Controls.Add(MakeNoticeCard(id, notice));
+                if (IsVisible(StatusOf(notice)) && !(completedNoticesHiddenByHarness && IsCompleted(StatusOf(notice)))) cards.Controls.Add(MakeNoticeCard(id, notice));
             }
         }
         finally
@@ -2548,6 +2734,7 @@ public sealed class DshNotifyGui : Form
     {
         notices.Remove(id);
         noticeOrder.Remove(id);
+        RefreshHarnessNoticeSuppression();
         RenderNotices();
         Send("notice.closed", "id", id);
     }
@@ -2883,6 +3070,8 @@ public sealed class DshNotifyGui : Form
         bool soundDisabledByDefault = !settings.NotificationSound;
         form.Check("notice-sound").Checked = true;
         bool soundCheckbox = settings.NotificationSound;
+        form.Check("hide-completed-harness-open").Checked = true;
+        bool harnessCheckbox = settings.HideCompletedWhenHarnessOpen;
         ComboBox soundChoices = (ComboBox)form.Controls.Find("notification-sound-preset", true).Single();
         bool legacySoundPreserved = soundChoices.SelectedIndex == 0 && settings.NotificationSoundPreset == "icq";
         soundChoices.SelectedIndex = NotificationSounds.IndexOf("squeak");
@@ -3020,6 +3209,34 @@ public sealed class DshNotifyGui : Form
         List<string> output = new List<string>();
         int soundCount = 0;
         string playedPreset = null;
+        bool harnessOpen = true;
+        List<string> harnessOutput = new List<string>();
+        DshNotifyGui harnessGui = new DshNotifyGui(false, delegate(string line) { harnessOutput.Add(line); },
+            delegate(string preset) { soundCount++; }, delegate { return harnessOpen; });
+        Settings harnessSettings = new Settings();
+        harnessSettings.HideCompletedWhenHarnessOpen = true;
+        harnessGui.ApplyRemote(harnessSettings);
+        harnessGui.Process("{\"t\":\"notice.show\",\"id\":\"suppressed\",\"reason\":\"completed\"}");
+        bool newCompletedSuppressed = harnessGui.cards.Controls.Count == 0 && harnessOutput.Count(line => line.Contains("notice.closed")) == 1
+            && soundCount == 0 && !harnessGui.HarnessNoticeTimerEnabledForTest;
+        harnessOpen = false;
+        harnessGui.Process("{\"t\":\"notice.show\",\"id\":\"retained\",\"reason\":\"completed\"}");
+        int retainedRenderCount = harnessGui.NoticeRenderCountForTest;
+        bool retainedShown = harnessGui.cards.Controls.Count == 1 && harnessGui.HarnessNoticeTimerEnabledForTest;
+        harnessOpen = true;
+        harnessGui.RefreshHarnessNoticeSuppressionFromTimer();
+        bool retainedHiddenOnTransition = harnessGui.cards.Controls.Count == 0 && harnessGui.NoticeRenderCountForTest == retainedRenderCount + 1;
+        harnessGui.Process("{\"t\":\"notice.show\",\"id\":\"retained\",\"reason\":\"completed\"}");
+        bool duplicateRetained = harnessOutput.Count(line => line.Contains("notice.closed")) == 1;
+        int hiddenRenderCount = harnessGui.NoticeRenderCountForTest;
+        harnessGui.RefreshHarnessNoticeSuppressionFromTimer();
+        bool noRepeatedRender = harnessGui.NoticeRenderCountForTest == hiddenRenderCount;
+        harnessGui.HideNoticeStack();
+        harnessOpen = false;
+        harnessGui.RefreshHarnessNoticeSuppressionFromTimer();
+        bool retainedRestoredWithoutReplayingSound = harnessGui.cards.Controls.Count == 1 && !harnessGui.stack.Visible && soundCount == 0;
+        harnessGui.Dispose();
+        bool harnessDefaultOff = !new Settings().HideCompletedWhenHarnessOpen;
         DshNotifyGui gui = new DshNotifyGui(false, delegate(string line)
         {
             output.Add(line);
@@ -3279,6 +3496,8 @@ public sealed class DshNotifyGui : Form
         passed = passed && noEcho && allRowsShown && allNoticesShown && interactionIds && registeredIdleFiltered;
         passed = passed && matrix && fieldsHidden && rowsReplaced && compactToggle && noticePresentation
             && completedRowFirst && completedNoticeFirst && noticeHeightAndWidth && fixedWidgetWidth && wholeCardScroll;
+        passed = passed && harnessDefaultOff && newCompletedSuppressed && retainedShown && retainedHiddenOnTransition
+            && duplicateRetained && noRepeatedRender && retainedRestoredWithoutReplayingSound && harnessCheckbox;
         passed = passed && resizeThresholdCheck && resizeThresholdAllScales && resizeThresholdLongList && resizeThresholdExactRows && manualHeightCanExceedAutomaticDefault;
         Console.WriteLine("{\"t\":\"selftest\",\"pass\":" + (passed ? "true" : "false")
             + ",\"checks\":{\"checkbox\":" + JsonBool(checkbox)
@@ -3286,6 +3505,14 @@ public sealed class DshNotifyGui : Form
             + ",\"clamp\":" + JsonBool(clamp)
             + ",\"settingsRoundTrip\":" + JsonBool(settingsRoundTrip)
             + ",\"newSettings\":" + JsonBool(newSettings)
+            + ",\"harnessDefaultOff\":" + JsonBool(harnessDefaultOff)
+            + ",\"harnessCheckbox\":" + JsonBool(harnessCheckbox)
+            + ",\"newCompletedSuppressed\":" + JsonBool(newCompletedSuppressed)
+            + ",\"retainedShown\":" + JsonBool(retainedShown)
+            + ",\"retainedHiddenOnTransition\":" + JsonBool(retainedHiddenOnTransition)
+            + ",\"duplicateRetained\":" + JsonBool(duplicateRetained)
+            + ",\"noRepeatedRender\":" + JsonBool(noRepeatedRender)
+            + ",\"retainedRestoredWithoutReplayingSound\":" + JsonBool(retainedRestoredWithoutReplayingSound)
             + ",\"interfaceStyleDefaultsClassic\":" + JsonBool(interfaceStyleDefaultsClassic)
             + ",\"interfaceStyleModern\":" + JsonBool(interfaceStyleModern)
             + ",\"interfaceStyleReturnsClassic\":" + JsonBool(interfaceStyleReturnsClassic)

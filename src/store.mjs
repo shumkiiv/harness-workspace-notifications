@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   ShowWidget: true,
   ShowNotifications: true,
   NotificationSound: false,
+  HideCompletedWhenHarnessOpen: false,
   NotificationSoundPreset: 'icq',
   SubagentNotices: false,
   FieldWorkspace: true,
