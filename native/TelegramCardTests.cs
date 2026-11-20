@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
+using System.Text;
 using System.Web.Script.Serialization;
 
 // Synthetic-only smoke tests used by the native safety harness.  They have no
@@ -31,6 +32,7 @@ internal static class TelegramCardTests
         if (!PlainTextContract()) return false;
         if (!MetricAndStatusContract()) return false;
         if (!InvariantProjection()) return false;
+        if (!MiniAppSignatureContract()) return false;
         if (!RejectsOwnBot()) return false;
         DateTime clock = new DateTime(2026, 1, 1); Fake fake = new Fake(); Store store = new Store { Fail = false };
         Action<Action> inline = delegate(Action action) { action(); };
@@ -156,6 +158,11 @@ internal static class TelegramCardTests
                 && Math.Abs(Convert.ToDouble(balance["amount"], CultureInfo.InvariantCulture) - 12.5) < .001;
         }
         finally { CultureInfo.CurrentCulture = original; }
+    }
+    private static bool MiniAppSignatureContract()
+    {
+        string actual = HarnessMiniAppFeed.Signature("999999:abcdefghijklmnopqrstuvwxyz_123456", "42", 1, Encoding.UTF8.GetBytes("{}"));
+        return actual == "7b6877cc7c13d49e5eac59604fe7f496bbbcd0701f90ae9f8494d0130261af8f";
     }
     private static TelegramCredentials Copy(TelegramCredentials value) { return new TelegramCredentials { Enabled = value.Enabled, ErrorNotice = value.ErrorNotice, BotToken = value.BotToken, ChatId = value.ChatId, MessageId = value.MessageId, Uncertain = value.Uncertain, IsTextMessage = value.IsTextMessage }; }
 }

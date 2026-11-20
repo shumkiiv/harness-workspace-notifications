@@ -17,7 +17,7 @@ const args = [
   '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Web.Extensions.dll',
   '/out:' + path.join(native, 'DshNotifyGui.exe'),
   path.join(native, 'DshNotifyGui.cs'), path.join(native, 'DshNotifyGuiModern.cs'), path.join(native, 'Visuals.cs'), path.join(native, 'WidgetQuotaKeys.cs'),
-  path.join(native, 'ITelegramTransport.cs'), path.join(native, 'TelegramCredentials.cs'), path.join(native, 'TelegramCardPolicy.cs'), path.join(native, 'TelegramTextFormatter.cs'), path.join(native, 'TelegramPublisher.cs'), path.join(native, 'TelegramSettingsUi.cs'), path.join(native, 'TelegramCardTests.cs')
+  path.join(native, 'ITelegramTransport.cs'), path.join(native, 'TelegramCredentials.cs'), path.join(native, 'TelegramCardPolicy.cs'), path.join(native, 'TelegramTextFormatter.cs'), path.join(native, 'TelegramPublisher.cs'), path.join(native, 'HarnessMiniAppFeed.cs'), path.join(native, 'TelegramSettingsUi.cs'), path.join(native, 'TelegramCardTests.cs')
 ]
 
 const result = spawnSync(compiler, args, { stdio: 'inherit' })

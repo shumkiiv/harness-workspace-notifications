@@ -1692,6 +1692,7 @@ public sealed class DshNotifyGui : Form
     private List<Dictionary<string, object>> availableLimitProviders = new List<Dictionary<string, object>>();
     private DateTime limitsReceivedAt = DateTime.MinValue;
     private readonly TelegramPublisher telegramPublisher;
+    private readonly HarnessMiniAppFeed miniAppFeed;
     private TelegramCredentials telegramSettings;
     private string lastTelegramData;
     private DateTime lastTelegramSourceAt = DateTime.MinValue;
@@ -1778,6 +1779,10 @@ public sealed class DshNotifyGui : Form
             delegate(Action action) { System.Threading.ThreadPool.QueueUserWorkItem(delegate { action(); }); },
             delegate(Action action) { try { BeginInvoke(action); } catch { } },
             delegate { return DateTime.UtcNow; }, TelegramCredentialStore.Save);
+        miniAppFeed = new HarnessMiniAppFeed(
+            delegate(Action action) { System.Threading.ThreadPool.QueueUserWorkItem(delegate { action(); }); },
+            delegate(Action action) { try { BeginInvoke(action); } catch { } },
+            delegate { return DateTime.UtcNow; }, HarnessMiniAppFeed.DefaultDirectory);
         if (!demoMode && enableTelegram)
         {
             TelegramCredentialStore.TryRead(out telegramSettings);
@@ -2208,6 +2213,7 @@ public sealed class DshNotifyGui : Form
         if (lastTelegramSourceAt == DateTime.MinValue) return;
         lastTelegramData = TelegramCardPolicy.Build(widgetRows.Values, Settings.ShowLimits ? limitProviders : null, lastTelegramSourceAt);
         telegramPublisher.Tick(lastTelegramData, TelegramPublisher.StableKey(lastTelegramData));
+        miniAppFeed.Tick(lastTelegramData, telegramPublisher.Current);
     }
 
     private void TelegramChanged(TelegramCredentials changed)
@@ -3154,6 +3160,7 @@ public sealed class DshNotifyGui : Form
         }
         isShuttingDown = true;
         telegramPublisher.Close();
+        miniAppFeed.Close();
         foreach (Form form in new List<Form>(settingsForms))
         {
             form.Close();

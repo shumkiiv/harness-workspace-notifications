@@ -128,3 +128,13 @@ npm run preview -- --demo --full --limits --settings
 Соберите помощник командой npm run build. При подключении пакета к профилю Harness используйте dsh.bundle.patch и cordis.patch.yml. Сборка и демонстрация сами профиль не меняют.
 
 Плагин сохраняет настройки окон и краткую историю результатов локально.
+
+## Private Mini App relay
+
+`miniapp/` — отдельный необязательный read-only Mini App. Windows читает только
+локальный `mini-app.json` из `DSH_WN_DATA_DIR` (иначе
+`~/.dsh/workspace-notifications`); единственное поле — `endpoint`, HTTPS URL с
+точным путём `/harness/api/snapshot`. Этот файл не входит в Git. Отправляется
+уже ограниченная проекция `TelegramCardPolicy` с тремя заголовками подписи.
+Серверный адаптер получает токен и владельца только из существующей `settings()`
+старого сервиса; новый источник секретов не создаётся.
