@@ -16,4 +16,8 @@ test('native helper self-test reports every named check', () => {
   assert.equal(report.checks.providerBadgeAliases, true)
   assert.equal(report.checks.notificationSound, true)
   assert.equal(report.checks.notificationSoundPresets, true)
+  assert.equal(report.checks.settingsNoScrollbars, true)
+  assert.equal(report.checks.settingsPagingKeepsLimitRowsReachable, true)
+  assert.equal(report.checks.settingsFitsWorkingAreaAtAllScales, true)
+  assert.equal(report.checks.settingsThemesKeepLayoutStable, true)
 })

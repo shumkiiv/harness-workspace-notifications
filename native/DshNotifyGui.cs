@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -217,19 +218,27 @@ public sealed class SettingsForm : Form
     private readonly ComboBox themeMode = new ComboBox();
     private readonly Action<string> quotaKeyChanged;
     private readonly bool allowQuotaVault;
+    private readonly Rectangle? layoutWorkingArea;
     private Panel contentPanel;
     private bool syncing;
+    private bool fittingContent;
     private int page;
+    private int limitProviderPage;
+    private Button previousLimitPage;
+    private Button nextLimitPage;
+    private Label limitPageCaption;
 
     public Button SaveButton { get; private set; }
 
     public SettingsForm(Settings current, Action<Settings> onChanged, List<Dictionary<string, object>> providers,
-        Action<string> previewSound = null, Action<string> onQuotaKeyChanged = null, bool quotaVaultEnabled = true)
+        Action<string> previewSound = null, Action<string> onQuotaKeyChanged = null, bool quotaVaultEnabled = true,
+        Rectangle? workingArea = null)
     {
         value = current;
         changed = onChanged;
         quotaKeyChanged = onQuotaKeyChanged;
         allowQuotaVault = quotaVaultEnabled;
+        layoutWorkingArea = workingArea;
         Text = "Настройки";
         FormBorderStyle = FormBorderStyle.None;
         SuspendLayout();
@@ -239,6 +248,7 @@ public sealed class SettingsForm : Form
         KeyPreview = true;
         ShowInTaskbar = false;
         KeyDown += delegate(object sender, KeyEventArgs args) { if (args.KeyCode == Keys.Escape) Close(); };
+        Shown += delegate { FitToVisibleContent(); };
         Panel titleBar = new Panel();
         titleBar.BackColor = Graphite.Card; titleBar.SetBounds(0, 0, 398, 32);
         titleBar.MouseDown += DragCaption;
@@ -376,7 +386,7 @@ public sealed class SettingsForm : Form
         contentPanel = new Panel();
         contentPanel.SetBounds(8, 64, 382, 218);
         contentPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-        contentPanel.AutoScroll = true;
+        contentPanel.AutoScroll = false;
         contentPanel.BackColor = Graphite.Card;
         foreach (Control control in new List<Control>(pages.Keys))
         {
@@ -386,6 +396,7 @@ public sealed class SettingsForm : Form
         }
         Controls.Add(contentPanel);
         contentPanel.SizeChanged += delegate { FitRows(); };
+        AddLimitPageControls();
         FitRows();
         ShowPage(0);
         ResumeLayout(true);
@@ -428,7 +439,6 @@ public sealed class SettingsForm : Form
     public void UpdateLimitProviders(List<Dictionary<string, object>> providers)
     {
         int previousPage = page;
-        Point scroll = contentPanel.AutoScrollPosition;
         page = 3;
         HashSet<string> wanted = new HashSet<string>((providers ?? new List<Dictionary<string, object>>()).Select(provider => Convert.ToString(provider.ContainsKey("id") ? provider["id"] : "")).Where(id => !String.IsNullOrEmpty(id)));
         foreach (string key in checks.Keys.Where(key => key.StartsWith("limit-", StringComparison.Ordinal) && !wanted.Contains(key.Substring(6))).ToList())
@@ -451,7 +461,6 @@ public sealed class SettingsForm : Form
         page = previousPage;
         FitRows();
         ShowPage(previousPage);
-        contentPanel.AutoScrollPosition = new Point(-scroll.X, -scroll.Y);
         ApplyWindowScale();
     }
 
@@ -524,19 +533,147 @@ public sealed class SettingsForm : Form
         top += 22;
     }
 
+    private void AddLimitPageControls()
+    {
+        previousLimitPage = new Button { Text = "←", AccessibleName = "Предыдущая страница лимитов", FlatStyle = FlatStyle.Flat };
+        nextLimitPage = new Button { Text = "→", AccessibleName = "Следующая страница лимитов", FlatStyle = FlatStyle.Flat };
+        limitPageCaption = new Label { TextAlign = ContentAlignment.MiddleCenter, ForeColor = Graphite.Secondary, BackColor = Graphite.Card };
+        previousLimitPage.Click += delegate { if (limitProviderPage > 0) { limitProviderPage--; ShowPage(page); } };
+        nextLimitPage.Click += delegate { limitProviderPage++; ShowPage(page); };
+        contentPanel.Controls.Add(previousLimitPage);
+        contentPanel.Controls.Add(nextLimitPage);
+        contentPanel.Controls.Add(limitPageCaption);
+        pages[previousLimitPage] = 3;
+        pages[nextLimitPage] = 3;
+        pages[limitPageCaption] = 3;
+    }
+
+    private int WorkingAreaHeight()
+    {
+        Rectangle area = WorkingArea();
+        return Math.Max(1, area.Height - 16);
+    }
+
+    private Rectangle WorkingArea()
+    {
+        return layoutWorkingArea ?? Screen.GetWorkingArea(new Point(Left, Top));
+    }
+
+    private void FitToVisibleContent()
+    {
+        if (fittingContent || contentPanel == null || scaleBounds.Count == 0) return;
+        fittingContent = true;
+        try
+        {
+        float factor = WindowScaleFactor();
+        int margin = Math.Max(6, (int)Math.Round(8 * factor));
+        int footerGap = margin;
+        int bottomMargin = Math.Max(8, (int)Math.Round(14 * factor));
+        int maximumHeight = WorkingAreaHeight();
+        int availableContentHeight = Math.Max(1, maximumHeight - contentPanel.Top - footerGap - SaveButton.Height - bottomMargin);
+        foreach (Control control in new Control[] { previousLimitPage, nextLimitPage, limitPageCaption }) control.Visible = false;
+        List<Control> controls = pages.Where(item => item.Value == page && item.Key != previousLimitPage
+            && item.Key != nextLimitPage && item.Key != limitPageCaption).Select(item => item.Key).ToList();
+        List<List<Control>> rows = new List<List<Control>>();
+        int bandBottom = Int32.MinValue;
+        foreach (Control control in controls.OrderBy(control => ScaleRectangle(scaleBounds[control], factor).Top))
+        {
+            Rectangle bounds = ScaleRectangle(scaleBounds[control], factor);
+            if (rows.Count == 0 || bounds.Top >= bandBottom)
+            {
+                rows.Add(new List<Control>());
+                bandBottom = bounds.Bottom;
+            }
+            else
+            {
+                bandBottom = Math.Max(bandBottom, bounds.Bottom);
+            }
+            rows[rows.Count - 1].Add(control);
+        }
+        int navigationHeight = Math.Max(1, (int)Math.Round(23 * factor));
+        int usableHeight = Math.Max(1, availableContentHeight - navigationHeight - margin * 2);
+        List<List<List<Control>>> contentPages = new List<List<List<Control>>>();
+        List<List<Control>> currentPage = new List<List<Control>>();
+        int used = 0;
+        foreach (List<Control> row in rows)
+        {
+            int rowHeight = row.Select(control => ScaleRectangle(scaleBounds[control], factor).Height).Max();
+            if (currentPage.Count > 0 && used + rowHeight > usableHeight)
+            {
+                contentPages.Add(currentPage);
+                currentPage = new List<List<Control>>();
+                used = 0;
+            }
+            currentPage.Add(row);
+            used += rowHeight;
+        }
+        if (currentPage.Count > 0) contentPages.Add(currentPage);
+        if (contentPages.Count == 0) contentPages.Add(new List<List<Control>>());
+        limitProviderPage = Math.Max(0, Math.Min(limitProviderPage, contentPages.Count - 1));
+        foreach (Control control in controls) control.Visible = false;
+        int top = margin;
+        foreach (List<Control> row in contentPages[limitProviderPage])
+        {
+            int sourceTop = row.Select(control => ScaleRectangle(scaleBounds[control], factor).Top).Min();
+            int rowHeight = row.Select(control => ScaleRectangle(scaleBounds[control], factor).Height).Max();
+            foreach (Control control in row)
+            {
+                Rectangle source = ScaleRectangle(scaleBounds[control], factor);
+                control.SetBounds(source.Left, top + source.Top - sourceTop, source.Width, source.Height);
+                control.Visible = true;
+            }
+            top += rowHeight;
+        }
+        if (contentPages.Count > 1)
+        {
+            previousLimitPage.Visible = true;
+            nextLimitPage.Visible = true;
+            limitPageCaption.Visible = true;
+            previousLimitPage.SetBounds(RowInset, top, 32, navigationHeight);
+            nextLimitPage.SetBounds(Math.Max(RowInset + 36, contentPanel.ClientSize.Width - RowInset - 32), top, 32, navigationHeight);
+            limitPageCaption.SetBounds(RowInset + 40, top + 2, Math.Max(1, contentPanel.ClientSize.Width - (RowInset + 40) * 2), navigationHeight - 4);
+            previousLimitPage.Enabled = limitProviderPage > 0;
+            nextLimitPage.Enabled = limitProviderPage + 1 < contentPages.Count;
+            previousLimitPage.AccessibleName = page == 3 ? "Предыдущая страница лимитов" : "Предыдущая страница настроек";
+            nextLimitPage.AccessibleName = page == 3 ? "Следующая страница лимитов" : "Следующая страница настроек";
+            limitPageCaption.Text = "Страница " + (limitProviderPage + 1) + " из " + contentPages.Count;
+            top += navigationHeight;
+        }
+        int contentHeight = Math.Min(availableContentHeight, Math.Max(1, top + margin));
+        Rectangle workingArea = WorkingArea();
+        MinimumSize = new Size(Math.Min(Math.Max(1, (int)Math.Round(360 * factor)), workingArea.Width), Math.Min(Math.Max(1, (int)Math.Round(280 * factor)), maximumHeight));
+        int width = Math.Min(Math.Max(1, (int)Math.Round(scaleBounds[this].Width * factor)), workingArea.Width);
+        int height = Math.Min(maximumHeight, contentPanel.Top + contentHeight + footerGap + SaveButton.Height + bottomMargin);
+        if (ClientSize.Width != width || ClientSize.Height != height) ClientSize = new Size(width, height);
+        if (Visible) Location = Geometry.ClampToVisible(Bounds, workingArea).Location;
+        contentPanel.Height = contentHeight;
+        SaveButton.Top = contentPanel.Bottom + footerGap;
+        if (contentPages.Count > 1)
+        {
+            nextLimitPage.Left = Math.Max(RowInset + 36, contentPanel.ClientSize.Width - RowInset - nextLimitPage.Width);
+            limitPageCaption.Width = Math.Max(1, nextLimitPage.Left - limitPageCaption.Left - 4);
+        }
+        FitRows();
+        }
+        finally
+        {
+            fittingContent = false;
+        }
+    }
+
     private void FitRows()
     {
-        // Reserve the vertical scrollbar gutter before layout can introduce a horizontal scrollbar.
         int inset = (int)Math.Round(RowInset * WindowScaleFactor());
-        int width = Math.Max(1, contentPanel.Width - inset * 2 - SystemInformation.VerticalScrollBarWidth);
+        int width = Math.Max(1, contentPanel.ClientSize.Width - inset * 2);
         foreach (CheckBox row in checks.Values) row.Width = width;
     }
 
     private void ShowPage(int selected)
     {
+        if (page != selected) limitProviderPage = 0;
         page = selected;
-        contentPanel.AutoScrollPosition = Point.Empty;
         foreach (KeyValuePair<Control, int> item in pages) item.Key.Visible = item.Value == selected;
+        FitToVisibleContent();
     }
 
     private void Save()
@@ -596,7 +733,8 @@ public sealed class SettingsForm : Form
 
     private float WindowScaleFactor()
     {
-        return value.WidgetScale == "small" ? .85F : (value.WidgetScale == "large" ? 1.25F : 1F);
+        float requested = value.WidgetScale == "small" ? .85F : (value.WidgetScale == "large" ? 1.25F : 1F);
+        return Math.Min(requested, Math.Max(.5F, (float)WorkingArea().Width / 398F));
     }
 
     private static Rectangle ScaleRectangle(Rectangle rectangle, float factor)
@@ -628,7 +766,7 @@ public sealed class SettingsForm : Form
             if (Math.Abs(control.Font.SizeInPoints - targetSize) > .01F)
                 control.Font = new Font(control.Font.FontFamily, targetSize, control.Font.Style);
         }
-        FitRows();
+        FitToVisibleContent();
     }
 
     private static int ControlDepth(Control control)
@@ -755,7 +893,7 @@ public sealed class LimitsPanel : Control
         receivedAt = received;
         int lines = 0;
         foreach (Dictionary<string, object> provider in providers)
-            lines += HasCurrentData(provider) ? ValueList(provider, "windows").Count + MetricText(provider).Count : 1;
+            lines += HasCurrentData(provider) ? ValueList(provider, "windows").Count + Metrics(provider).Count : 1;
         Height = Math.Max(Px(22), Px(FirstRowTop) + lines * PaintedRowHeight + Math.Max(0, providers.Count - 1) * ProviderGap);
         AccessibleDescription = String.Join(", ", providers.Select(ProviderName).ToArray());
         Invalidate();
@@ -810,20 +948,35 @@ public sealed class LimitsPanel : Control
                     string caption = period + " · " + Math.Round(percent) + "%" + (reset.Length == 0 ? "" : " · " + reset);
                     TextRenderer.DrawText(graphics, caption, detail,
                         new Rectangle(Px(dataLeft), top, Px(dataWidth), rowHeight - Px(4)), Graphite.Primary, CompactText);
-                    Rectangle track = new Rectangle(Px(dataLeft), top + rowHeight - Px(4), Px(Math.Min(70, dataWidth)), Px(3));
-                    using (Brush trackBrush = new SolidBrush(Graphite.Border)) graphics.FillRectangle(trackBrush, track);
-                    Color tier = percent < 25 ? Graphite.QuotaLow : (percent < 60 ? Graphite.QuotaMedium : Graphite.QuotaHigh);
-                    using (Brush fill = new SolidBrush(tier)) graphics.FillRectangle(fill, track.X, track.Y, (int)(track.Width * percent / 100.0), track.Height);
+                    DrawTrack(graphics, dataLeft, dataWidth, top + rowHeight, percent);
                     top += rowHeight;
                 }
-                foreach (string metric in MetricText(provider, true))
+                foreach (LimitMetric metric in Metrics(provider, true))
                 {
-                    TextRenderer.DrawText(graphics, metric, detail, new Rectangle(Px(dataLeft), top, Px(dataWidth), rowHeight),
-                        Graphite.Primary, CompactText | TextFormatFlags.VerticalCenter);
+                    int textHeight = metric.HasTrack ? rowHeight - Px(4) : rowHeight;
+                    TextFormatFlags flags = metric.HasTrack ? CompactText : CompactText | TextFormatFlags.VerticalCenter;
+                    TextRenderer.DrawText(graphics, metric.Caption, detail, new Rectangle(Px(dataLeft), top, Px(dataWidth), textHeight),
+                        Graphite.Primary, flags);
+                    if (metric.HasTrack) DrawTrack(graphics, dataLeft, dataWidth, top + rowHeight, metric.Percent);
                     top += rowHeight;
                 }
             }
         }
+    }
+
+    private void DrawTrack(Graphics graphics, int left, int width, int rowBottom, double? percent)
+    {
+        Rectangle track = new Rectangle(Px(left), rowBottom - Px(4), Px(Math.Min(70, width)), Px(3));
+        if (!percent.HasValue)
+        {
+            using (Brush hatch = new HatchBrush(HatchStyle.LightDownwardDiagonal, Graphite.Border, Graphite.Base))
+                graphics.FillRectangle(hatch, track);
+            return;
+        }
+        using (Brush trackBrush = new SolidBrush(Graphite.Border)) graphics.FillRectangle(trackBrush, track);
+        double value = percent.Value;
+        Color tier = value < 25 ? Graphite.QuotaLow : (value < 60 ? Graphite.QuotaMedium : Graphite.QuotaHigh);
+        using (Brush fill = new SolidBrush(tier)) graphics.FillRectangle(fill, track.X, track.Y, (int)(track.Width * value / 100.0), track.Height);
     }
 
     internal static string Countdown(long resetAt, bool compact = false)
@@ -893,27 +1046,66 @@ public sealed class LimitsPanel : Control
         string format = number != 0 && Math.Abs(number) < 0.01m ? "0.############" : "#,0.##";
         return number.ToString(format, AmountCulture);
     }
-    private static List<string> MetricText(Dictionary<string, object> provider, bool compact = false)
+    private sealed class LimitMetric
     {
-        List<string> values = new List<string>();
+        public readonly string Caption;
+        public readonly bool HasTrack;
+        public readonly double? Percent;
+
+        public LimitMetric(string caption, double? percent = null, bool hasTrack = true)
+        {
+            Caption = caption;
+            Percent = percent;
+            HasTrack = hasTrack;
+        }
+
+        public string Hint
+        {
+            get
+            {
+                if (!HasTrack) return Caption;
+                return Caption + " · " + (Percent.HasValue ? "осталось " + Math.Round(Percent.Value) + "%" : "Лимит не указан");
+            }
+        }
+    }
+
+    private static List<LimitMetric> Metrics(Dictionary<string, object> provider, bool compact = false)
+    {
+        List<LimitMetric> values = new List<LimitMetric>();
         foreach (Dictionary<string, object> amount in ValueList(provider, "amounts"))
         {
             string balance = Field(amount, "balance"); string currency = Field(amount, "currency");
             if (balance.Length > 0 && currency.Length > 0)
-                values.Add((Field(amount, "kind") == "bonus" ? "Бонус " : "Баланс ") + DisplayAmount(balance, compact) + " " + currency);
+                values.Add(new LimitMetric((Field(amount, "kind") == "bonus" ? "Бонус " : "Баланс ") + DisplayAmount(balance, compact) + " " + currency));
         }
         string unlimited = NestedField(provider, "credits", "unlimited");
         string credits = NestedField(provider, "credits", "balance");
-        if (unlimited == "True") values.Add("Кредиты без лимита");
-        else if (credits.Length > 0) values.Add("Кредиты " + DisplayAmount(credits, compact));
+        if (unlimited == "True") values.Add(new LimitMetric("Кредиты без лимита", hasTrack: false));
+        else if (credits.Length > 0) values.Add(new LimitMetric("Кредиты " + DisplayAmount(credits, compact)));
         string remaining = NestedField(provider, "individualLimit", "remaining");
-        if (remaining.Length > 0) values.Add((compact ? "Бюджет " : "Остаток лимита расходов ") + DisplayAmount(remaining, compact));
+        if (remaining.Length > 0)
+            values.Add(new LimitMetric((compact ? "Бюджет " : "Остаток лимита расходов ") + DisplayAmount(remaining, compact),
+                SpendingPercent(provider, remaining)));
         return values;
     }
+
+    private static double? SpendingPercent(Dictionary<string, object> provider, string remaining)
+    {
+        double percent;
+        if (Double.TryParse(NestedField(provider, "individualLimit", "remainingPercent"), out percent) && percent >= 0 && percent <= 100)
+            return percent;
+        decimal current, limit;
+        const NumberStyles numberStyle = NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint;
+        if (!Decimal.TryParse(remaining, numberStyle, CultureInfo.InvariantCulture, out current) ||
+            !Decimal.TryParse(NestedField(provider, "individualLimit", "limit"), numberStyle, CultureInfo.InvariantCulture, out limit) ||
+            limit <= 0) return null;
+        return (double)(Math.Min(limit, Math.Max(0, current)) / limit * 100);
+    }
+
     private static bool ProviderAvailable(Dictionary<string, object> provider)
     {
         return String.Equals(Field(provider, "state"), "ok", StringComparison.Ordinal)
-            && (ValueList(provider, "windows").Count > 0 || MetricText(provider).Count > 0);
+            && (ValueList(provider, "windows").Count > 0 || Metrics(provider).Count > 0);
     }
     private bool HasCurrentData(Dictionary<string, object> provider)
     {
@@ -941,7 +1133,7 @@ public sealed class LimitsPanel : Control
                 continue;
             }
             List<Dictionary<string, object>> windows = ValueList(provider, "windows");
-            List<string> metrics = MetricText(provider);
+            List<LimitMetric> metrics = Metrics(provider);
             int count = Math.Max(1, windows.Count + metrics.Count);
             if (y >= visualTop && y < visualTop + count * rowHeight)
             {
@@ -953,7 +1145,7 @@ public sealed class LimitsPanel : Control
                     string reset = HasNumber(window, "resetAt") ? Countdown(ToLong(window, "resetAt")) : "срок неизвестен";
                     detail = Field(window, "label") + " " + Math.Round(ToDouble(window["percent"])) + "% · " + reset;
                 }
-                else if (local - windows.Count < metrics.Count) detail = metrics[local - windows.Count];
+                else if (local - windows.Count < metrics.Count) detail = metrics[local - windows.Count].Hint;
                 else detail = "Данные недоступны";
                 hints.SetToolTip(this, ProviderName(provider) + " · " + detail);
                 return;
@@ -1018,7 +1210,8 @@ public sealed class DshNotifyGui : Form
     private int expandedUserHeight;
     private int resizeStartHeight;
     private int resizeStartY;
-    private bool resizeStartedCompact;
+    private bool resizeDragHasFit;
+    private int resizeFitHeight;
     private readonly Button compactToggle = new Button();
     private readonly Dictionary<string, WidgetRow> widgetRows = new Dictionary<string, WidgetRow>();
     private readonly Dictionary<string, Dictionary<string, object>> notices =
@@ -1192,13 +1385,13 @@ public sealed class DshNotifyGui : Form
             if (args.Button != MouseButtons.Left) return;
             resizeStartHeight = Height;
             resizeStartY = Control.MousePosition.Y;
-            resizeStartedCompact = Settings.CompactWidget;
+            CaptureResizeFitHeight();
             resizeGrip.Capture = true;
         };
         resizeGrip.MouseMove += delegate(object sender, MouseEventArgs args)
         {
-            if (!resizeGrip.Capture || args.Button != MouseButtons.Left || resizeStartedCompact != Settings.CompactWidget) return;
-            SetUserWidgetHeight(resizeStartHeight + Control.MousePosition.Y - resizeStartY);
+            if (!resizeGrip.Capture || args.Button != MouseButtons.Left) return;
+            ResizeFromDrag(resizeStartHeight + Control.MousePosition.Y - resizeStartY);
         };
         resizeGrip.MouseUp += delegate(object sender, MouseEventArgs args)
         {
@@ -1626,12 +1819,12 @@ public sealed class DshNotifyGui : Form
         compact.Visible = Settings.CompactWidget;
         rows.Visible = !Settings.CompactWidget;
         limits.UpdateLimits(limitProviders, limitsReceivedAt);
-        UpdateLimitsHost();
         compactToggle.Text = Settings.CompactWidget ? "›" : "‹";
         compactToggle.AccessibleName = Settings.CompactWidget ? "Развернуть список" : "Свернуть список";
         if (Settings.CompactWidget)
         {
             compact.UpdateRows(visibleRows, Settings);
+            UpdateLimitsHost();
             ResizeWidget();
             return;
         }
@@ -1646,6 +1839,7 @@ public sealed class DshNotifyGui : Form
             {
                 rows.Controls.Add(Settings.CompactWorkspaceList ? MakeCompactWorkspaceRow(row, width) : MakeWidgetCard(row, width));
             }
+            UpdateLimitsHost();
             ResizeWidget();
         }
         finally
@@ -2092,25 +2286,106 @@ public sealed class DshNotifyGui : Form
         if (Settings.CompactWidget) return;
         Rectangle area = Screen.FromPoint(Location).WorkingArea;
         int requested = Math.Max(1, Math.Min(height, area.Bottom - Math.Max(Top, area.Top)));
-        expandedUserHeight = (int)Math.Round(requested / WidgetScaleFactor);
+        expandedUserHeight = LogicalHeightAtLeast(requested);
         UpdateLimitsHost();
         ResizeWidget();
+    }
+
+    internal void BeginResizeForTest()
+    {
+        resizeStartHeight = Height;
+        CaptureResizeFitHeight();
+    }
+
+    internal void ResizeFromDragForTest(int height)
+    {
+        ResizeFromDrag(height);
+    }
+
+    internal int ResizeFitHeightForTest { get { return resizeFitHeight; } }
+
+    private void CaptureResizeFitHeight()
+    {
+        Rectangle area = Screen.FromPoint(Location).WorkingArea;
+        resizeFitHeight = Settings.CompactWidget
+            ? Math.Max(MeasureExpandedFitHeight(VisibleWidgetRows()), Height + 1)
+            : FitHeightForContent(rows.ContentHeight, area, rows.TallestItemHeight);
+        resizeDragHasFit = !Settings.CompactWidget && Height >= resizeFitHeight;
+    }
+
+    private void ResizeFromDrag(int requestedHeight)
+    {
+        if (resizeFitHeight <= 0) CaptureResizeFitHeight();
+        if (Settings.CompactWidget)
+        {
+            if (requestedHeight < resizeFitHeight) return;
+            expandedUserHeight = LogicalHeightAtLeast(requestedHeight);
+            resizeDragHasFit = true;
+            Settings.CompactWidget = false;
+            UserChanged(Settings);
+            return;
+        }
+        if (requestedHeight < resizeFitHeight && (resizeDragHasFit || requestedHeight < resizeStartHeight))
+        {
+            Settings.CompactWidget = true;
+            UserChanged(Settings);
+            return;
+        }
+        if (requestedHeight >= resizeFitHeight) resizeDragHasFit = true;
+        SetUserWidgetHeight(requestedHeight);
+    }
+
+    private int LogicalHeightAtLeast(int physicalHeight)
+    {
+        int logical = (int)Math.Round(physicalHeight / WidgetScaleFactor);
+        return Px(logical) < physicalHeight ? logical + 1 : logical;
+    }
+
+    private List<WidgetRow> VisibleWidgetRows()
+    {
+        return widgetRows.Values.Where(row => IsVisible(row.Status)).ToList();
+    }
+
+    private int MeasureExpandedFitHeight(IEnumerable<WidgetRow> visibleRows)
+    {
+        int usableWidth = Math.Min(Px(WidgetWidth), Screen.FromPoint(Location).WorkingArea.Width);
+        int width = Math.Max(1, usableWidth - rows.Padding.Horizontal);
+        int contentHeight = rows.Padding.Vertical;
+        int tallestItemHeight = 0;
+        foreach (WidgetRow row in visibleRows.OrderBy(row => IsCompleted(row.Status) ? 0 : 1))
+        {
+            Control item = Settings.CompactWorkspaceList ? (Control)MakeCompactWorkspaceRow(row, width) : MakeWidgetCard(row, width);
+            contentHeight += item.Height + item.Margin.Vertical;
+            tallestItemHeight = Math.Max(tallestItemHeight, item.Height + item.Margin.Vertical);
+            item.Dispose();
+        }
+        return FitHeightForContent(contentHeight, Screen.FromPoint(Location).WorkingArea, tallestItemHeight);
+    }
+
+    private int FitHeightForContent(int contentHeight, Rectangle area, int tallestItemHeight)
+    {
+        int headerHeight = headerPanel == null ? WidgetHeaderHeight : headerPanel.Height;
+        int taskHeight = Math.Max(contentHeight, rows.Padding.Vertical + Math.Max(Px(24), tallestItemHeight));
+        int complete = headerHeight + (Settings.ShowLimits ? limits.DesiredHeight : 0) + resizeGrip.Height + taskHeight;
+        return Math.Min(complete, FeasibleHeight(area));
     }
 
     private void ResizeWidget()
     {
         Point previous = Location;
         Rectangle area = Screen.FromPoint(previous).WorkingArea;
-        int height = WidgetHeaderHeight + Px(CompactContentHeight) + limitsHost.Height;
+        int headerHeight = headerPanel == null ? WidgetHeaderHeight : headerPanel.Height;
+        int height = headerHeight + Px(CompactContentHeight) + limitsHost.Height + resizeGrip.Height;
         if (!Settings.CompactWidget)
         {
-            int chrome = WidgetHeaderHeight + limitsHost.Height + resizeGrip.Height;
+            int chrome = headerHeight + limitsHost.Height + resizeGrip.Height;
             int minimum = chrome + rows.Padding.Vertical + Math.Max(Px(24), rows.TallestItemHeight);
             int automatic = Math.Max(minimum, chrome + rows.ContentHeight);
-            int maximum = Math.Max(minimum, HeightLimit(area, WidgetHeaderHeight + Px(ExpandedHeight - WidgetHeaderHeight + ResizeGripHeight)));
-            height = expandedUserHeight > 0 ? Math.Max(minimum, Px(expandedUserHeight)) : Math.Min(automatic, maximum);
+            int automaticMaximum = Math.Max(minimum, HeightLimit(area, headerHeight + Px(ExpandedHeight - WidgetHeaderHeight + ResizeGripHeight)));
+            int maximum = Math.Max(minimum, FeasibleHeight(area));
+            height = expandedUserHeight > 0 ? Math.Min(maximum, Math.Max(minimum, Px(expandedUserHeight))) : Math.Min(automatic, automaticMaximum);
         }
-        resizeGrip.Visible = !Settings.CompactWidget;
+        resizeGrip.Visible = true;
         Rectangle next = Geometry.ClampToVisible(new Rectangle(previous, new Size(Px(WidgetWidth), height)), area);
         if (Bounds == next)
         {
@@ -2128,6 +2403,11 @@ public sealed class DshNotifyGui : Form
     private static int HeightLimit(Rectangle area, int maximum)
     {
         return Math.Max(1, Math.Min(maximum, (int)(area.Height * 0.55)));
+    }
+
+    private int FeasibleHeight(Rectangle area)
+    {
+        return Math.Max(1, area.Bottom - Math.Max(Top, area.Top));
     }
 
     private void ShowNotices()
@@ -2173,7 +2453,8 @@ public sealed class DshNotifyGui : Form
     {
         limitsHost.Visible = Settings.ShowLimits;
         int preferred = Math.Min(Px(UserWidgetHeight), Screen.FromPoint(Location).WorkingArea.Height);
-        int minimumTaskArea = Settings.CompactWidget ? Px(CompactContentHeight) : Px(160);
+        int minimumTaskArea = Settings.CompactWidget ? Px(CompactContentHeight)
+            : Math.Max(rows.ContentHeight, rows.Padding.Vertical + Math.Max(Px(24), rows.TallestItemHeight));
         int available = Math.Max(Math.Max(DefaultQuotaHeight, Px(DefaultQuotaHeight)), preferred - headerPanel.Height - resizeGrip.Height - minimumTaskArea);
         limitsHost.Height = Settings.ShowLimits ? Math.Min(available, limits.DesiredHeight) : 0;
         limits.Width = Math.Max(1, ClientSize.Width - limitsHost.Padding.Horizontal);
@@ -2309,11 +2590,13 @@ public sealed class DshNotifyGui : Form
         bool soundSelectionSaved = settings.NotificationSoundPreset == "squeak" && soundChoices.Items.Count == 6;
         ComboBox scaleChoices = (ComboBox)form.Controls.Find("widget-scale", true).Single();
         scaleChoices.SelectedIndex = 2;
-        bool settingsScaleLarge = form.ClientSize.Width == 498 && form.ClientSize.Height == 411;
+        Size settingsLargeSize = form.ClientSize;
+        bool settingsScaleLarge = settingsLargeSize.Width == 498 && settingsLargeSize.Height > 0;
         scaleChoices.SelectedIndex = 0;
-        bool settingsScaleSmall = form.ClientSize.Width == 338 && form.ClientSize.Height == 280;
+        Size settingsSmallSize = form.ClientSize;
+        bool settingsScaleSmall = settingsSmallSize.Width == 338 && settingsSmallSize.Height < settingsLargeSize.Height;
         scaleChoices.SelectedIndex = 2;
-        bool settingsScaleNoDrift = form.ClientSize.Width == 498 && form.ClientSize.Height == 411;
+        bool settingsScaleNoDrift = form.ClientSize == settingsLargeSize;
         bool settingsChildrenFit = form.SaveButton.Right <= form.ClientSize.Width && form.SaveButton.Bottom <= form.ClientSize.Height;
         form.UpdateLimitProviders(new List<Dictionary<string, object>>
         {
@@ -2332,6 +2615,62 @@ public sealed class DshNotifyGui : Form
         themes.SelectedIndex = 0;
         bool systemThemeDoesNotOverwriteLegacy = settings.Theme == "system" && !settings.ThemeDark;
         form.Dispose();
+        List<Dictionary<string, object>> longProviders = Enumerable.Range(0, 40).Select(index => new Dictionary<string, object>
+        {
+            { "id", "long-provider-" + index }, { "label", "Длинный поставщик лимитов " + index }
+        }).ToList();
+        Settings longSettings = new Settings();
+        SettingsForm longForm = new SettingsForm(longSettings, delegate(Settings changed) { }, longProviders,
+            null, null, true, new Rectangle(0, 0, 450, 360));
+        longForm.Show();
+        Application.DoEvents();
+        Panel settingsContent = longForm.Controls.Cast<Control>().OfType<Panel>().Single(panel => panel != null && panel.Controls.Count > 20);
+        bool defaultTabFits = settingsContent.Controls.Cast<Control>().Where(control => control.Visible)
+            .All(control => settingsContent.ClientRectangle.Contains(control.Bounds));
+        Dictionary<Control, int> longFormPages = (Dictionary<Control, int>)typeof(SettingsForm).GetField("pages",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(longForm);
+        HashSet<Control> visibleGeneralControls = new HashSet<Control>();
+        while (true)
+        {
+            foreach (Control control in longFormPages.Where(item => item.Value == 0).Select(item => item.Key).Where(control => control.Visible)) visibleGeneralControls.Add(control);
+            Button nextSettingsPage = settingsContent.Controls.Cast<Control>().OfType<Button>()
+                .FirstOrDefault(button => button.AccessibleName == "Следующая страница настроек");
+            if (nextSettingsPage == null || !nextSettingsPage.Enabled) break;
+            nextSettingsPage.PerformClick();
+        }
+        bool generalControlsReachable = longFormPages.Where(item => item.Value == 0).Select(item => item.Key)
+            .All(control => visibleGeneralControls.Contains(control));
+        Button limitsTab = longForm.Controls.Cast<Control>().OfType<Panel>().SelectMany(panel => panel.Controls.Cast<Control>())
+            .OfType<Button>().Single(button => button.AccessibleName == "Лимиты");
+        limitsTab.PerformClick();
+        bool settingsNoScrollbars = !longForm.AutoScroll && !settingsContent.AutoScroll;
+        Button previousPage = settingsContent.Controls.Cast<Control>().OfType<Button>().Single(button => button.AccessibleName == "Предыдущая страница лимитов");
+        Button nextPage = settingsContent.Controls.Cast<Control>().OfType<Button>().Single(button => button.AccessibleName == "Следующая страница лимитов");
+        HashSet<string> visibleProviders = new HashSet<string>();
+        do
+        {
+            foreach (CheckBox row in settingsContent.Controls.OfType<CheckBox>().Where(row => row.Visible && row.Name == "")) visibleProviders.Add(row.Text);
+            if (!nextPage.Enabled) break;
+            nextPage.PerformClick();
+        } while (true);
+        bool settingsPagingKeepsLimitRowsReachable = previousPage.Visible && nextPage.Visible && visibleProviders.Count == longProviders.Count
+            && settingsContent.Controls.Cast<Control>().Where(control => control.Visible).All(control => settingsContent.ClientRectangle.Contains(control.Bounds));
+        Size lightSize = longForm.ClientSize;
+        ComboBox longThemes = (ComboBox)longForm.Controls.Find("theme-mode", true).Single();
+        longThemes.SelectedIndex = 1;
+        Size explicitLightSize = longForm.ClientSize;
+        longThemes.SelectedIndex = 2;
+        bool settingsThemesKeepLayoutStable = lightSize == explicitLightSize && explicitLightSize == longForm.ClientSize;
+        ComboBox longScaleChoices = (ComboBox)longForm.Controls.Find("widget-scale", true).Single();
+        bool settingsFitsWorkingAreaAtAllScales = defaultTabFits && generalControlsReachable;
+        foreach (int scale in new int[] { 0, 1, 2 })
+        {
+            longScaleChoices.SelectedIndex = scale;
+            settingsFitsWorkingAreaAtAllScales = settingsFitsWorkingAreaAtAllScales && longForm.ClientSize.Width <= 450
+                && longForm.ClientSize.Height <= 344 && settingsContent.Controls.Cast<Control>().Where(control => control.Visible)
+                .All(control => settingsContent.ClientRectangle.Contains(control.Bounds));
+        }
+        longForm.Dispose();
         Form location = new Form();
         location.Width = 100;
         location.Height = 100;
@@ -2394,6 +2733,111 @@ public sealed class DshNotifyGui : Form
             + "\"path\":\"C:\\\\Notice\",\"duration\":\"1 с\",\"sessionId\":\"self-notice\"}");
         bool allRowsShown = gui.rows.Controls.Count == 10;
         bool allNoticesShown = gui.cards.Controls.Count == 1;
+        int settingsChangedBeforeResize = output.Count(line => line.Contains("settings.changed"));
+        gui.BeginResizeForTest();
+        int resizeThreshold = gui.ResizeFitHeightForTest;
+        Rectangle resizeArea = Screen.FromPoint(gui.Location).WorkingArea;
+        int oldAutomaticLimit = HeightLimit(resizeArea, gui.headerPanel.Height + gui.Px(ExpandedHeight - WidgetHeaderHeight + ResizeGripHeight));
+        int feasibleManualHeight = Math.Min(resizeArea.Bottom - Math.Max(gui.Top, resizeArea.Top), oldAutomaticLimit + 40);
+        gui.SetUserWidgetHeight(feasibleManualHeight);
+        bool manualHeightCanExceedAutomaticDefault = gui.Height == feasibleManualHeight;
+        gui.SetUserWidgetHeight(resizeThreshold + 20);
+        int manualExpandedHeight = gui.Height;
+        gui.ToggleCompactMode();
+        gui.ToggleCompactMode();
+        bool manualTogglePreservesHeight = !gui.Settings.CompactWidget && gui.Height == manualExpandedHeight;
+        gui.BeginResizeForTest();
+        int capturedThreshold = gui.ResizeFitHeightForTest;
+        gui.ResizeFromDragForTest(capturedThreshold - 1);
+        int compactHeight = gui.Height;
+        bool resizeThresholdCheck = capturedThreshold == resizeThreshold && gui.Settings.CompactWidget
+            && gui.resizeGrip.Height == gui.Px(ResizeGripHeight)
+            && compactHeight == gui.headerPanel.Height + gui.Px(CompactContentHeight) + gui.limitsHost.Height + gui.resizeGrip.Height;
+        gui.BeginResizeForTest();
+        gui.ResizeFromDragForTest(capturedThreshold - 1);
+        resizeThresholdCheck = resizeThresholdCheck && gui.Settings.CompactWidget && gui.Height == compactHeight;
+        gui.BeginResizeForTest();
+        int compactGestureThreshold = gui.ResizeFitHeightForTest;
+        gui.ResizeFromDragForTest(compactHeight);
+        resizeThresholdCheck = resizeThresholdCheck && compactGestureThreshold > compactHeight && gui.Settings.CompactWidget;
+        gui.ResizeFromDragForTest(compactGestureThreshold);
+        resizeThresholdCheck = resizeThresholdCheck && !gui.Settings.CompactWidget && gui.Height >= capturedThreshold;
+        resizeThresholdCheck = resizeThresholdCheck && manualTogglePreservesHeight
+            && output.Count(line => line.Contains("settings.changed")) == settingsChangedBeforeResize + 4;
+        bool resizeThresholdAllScales = true;
+        foreach (string scale in new string[] { "small", "medium", "large" })
+        {
+            foreach (bool shortList in new bool[] { false, true })
+            {
+                settings.WidgetScale = scale;
+                settings.CompactWorkspaceList = shortList;
+                settings.CompactWidget = false;
+                gui.UserChanged(settings);
+                gui.BeginResizeForTest();
+                int threshold = gui.ResizeFitHeightForTest;
+                gui.ResizeFromDragForTest(threshold);
+                gui.ResizeFromDragForTest(threshold - 1);
+                bool collapsed = gui.Settings.CompactWidget;
+                gui.BeginResizeForTest();
+                gui.ResizeFromDragForTest(gui.ResizeFitHeightForTest);
+                resizeThresholdAllScales = resizeThresholdAllScales && threshold > 0 && collapsed && !gui.Settings.CompactWidget;
+            }
+        }
+        settings.CompactWorkspaceList = false;
+        settings.WidgetScale = "medium";
+        settings.CompactWidget = false;
+        gui.UserChanged(settings);
+        StringBuilder mixedRows = new StringBuilder("{\"t\":\"widget.render\",\"rows\":[");
+        for (int index = 0; index < 5; index++)
+        {
+            if (index > 0) mixedRows.Append(",");
+            mixedRows.Append("{\"id\":\"fit-full-").Append(index).Append("\",\"workspace\":\"Полная карточка\",\"title\":\"Полная карточка\",\"status\":\"running\",\"statusText\":\"Выполняется\",\"taskSummary\":\"Длинная задача для точной высоты строки\",\"path\":\"C:\\\\Work\",\"timeText\":\"10:00\"}");
+        }
+        mixedRows.Append(",{\"id\":\"fit-short\",\"title\":\"Короткая\",\"status\":\"completed\"}]}");
+        gui.Process(mixedRows.ToString());
+        int exactMixedFit = gui.headerPanel.Height + gui.limitsHost.Height + gui.resizeGrip.Height + gui.rows.ContentHeight;
+        gui.BeginResizeForTest();
+        bool resizeThresholdExactRows = gui.ResizeFitHeightForTest == exactMixedFit;
+        StringBuilder manyRows = new StringBuilder("{\"t\":\"widget.render\",\"rows\":[");
+        for (int index = 0; index < 40; index++)
+        {
+            if (index > 0) manyRows.Append(",");
+            manyRows.Append("{\"id\":\"resize-").Append(index).Append("\",\"title\":\"Длинный список\",\"status\":\"running\"}");
+        }
+        manyRows.Append("]}");
+        settings.CompactWorkspaceList = false;
+        settings.WidgetScale = "medium";
+        settings.CompactWidget = false;
+        gui.UserChanged(settings);
+        gui.Process(manyRows.ToString());
+        gui.BeginResizeForTest();
+        int longListThreshold = gui.ResizeFitHeightForTest;
+        bool grewWhileAlreadyScrolling = true;
+        if (gui.Height + 1 < longListThreshold)
+        {
+            int startingHeight = gui.Height;
+            gui.ResizeFromDragForTest(startingHeight + 1);
+            grewWhileAlreadyScrolling = !gui.Settings.CompactWidget && gui.Height > startingHeight;
+        }
+        gui.ResizeFromDragForTest(longListThreshold);
+        gui.ResizeFromDragForTest(longListThreshold - 1);
+        bool resizeThresholdLongList = gui.Settings.CompactWidget && grewWhileAlreadyScrolling;
+        gui.BeginResizeForTest();
+        gui.ResizeFromDragForTest(gui.ResizeFitHeightForTest);
+        resizeThresholdLongList = resizeThresholdLongList && !gui.Settings.CompactWidget
+            && gui.rows.Controls.Count == 40 && gui.rows.Controls.Cast<Control>().Any(item => !item.Visible);
+        gui.Process("{\"t\":\"widget.render\",\"rows\":["
+            + "{\"id\":\"running\",\"title\":\"Выполняется\",\"status\":\"running\",\"sessionId\":\"self-card\","
+            + "\"path\":\"C:\\\\Path\",\"timeText\":\"10:00\"},"
+            + "{\"id\":\"completed\",\"title\":\"Завершено\",\"status\":\"completed\"},"
+            + "{\"id\":\"error\",\"title\":\"Ошибка\",\"status\":\"error\"},"
+            + "{\"id\":\"max\",\"title\":\"Лимит\",\"status\":\"max-tokens\"},"
+            + "{\"id\":\"blocked\",\"title\":\"Блок\",\"status\":\"blocked\"},"
+            + "{\"id\":\"aborted\",\"title\":\"Отмена\",\"status\":\"aborted\"},"
+            + "{\"id\":\"interrupted\",\"title\":\"Прервано\",\"status\":\"interrupted\"},"
+            + "{\"id\":\"idle\",\"title\":\"Без задач\",\"status\":\"idle\",\"registered\":true},"
+            + "{\"id\":\"unknown\",\"title\":\"Неизвестно\",\"status\":\"unknown\"},"
+            + "{\"id\":\"disposed\",\"title\":\"Закрыто\",\"status\":\"disposed\"}]}");
         InvokeLeftClick(gui.rows.Controls[1]);
         InvokeLeftClick(gui.cards.Controls[0]);
         bool interactionIds = output.Any(line => line.Contains("self-card"))
@@ -2500,10 +2944,12 @@ public sealed class DshNotifyGui : Form
             && taskIconConsistent && providerBadgeAliases && notificationSound && notificationSoundPresets
             && countdown && taskTitle && moveEmitted && moveStored && noTaskbarButtons;
         passed = passed && settingsScaleLarge && settingsScaleSmall && settingsScaleNoDrift && settingsChildrenFit && providerScaleStable
-            && explicitLightTheme && systemThemeDoesNotOverwriteLegacy;
+            && explicitLightTheme && systemThemeDoesNotOverwriteLegacy && settingsNoScrollbars && settingsPagingKeepsLimitRowsReachable
+            && settingsFitsWorkingAreaAtAllScales && settingsThemesKeepLayoutStable;
         passed = passed && noEcho && allRowsShown && allNoticesShown && interactionIds && registeredIdleFiltered;
         passed = passed && matrix && fieldsHidden && rowsReplaced && compactToggle && noticePresentation
             && completedRowFirst && completedNoticeFirst && noticeHeightAndWidth && fixedWidgetWidth && wholeCardScroll;
+        passed = passed && resizeThresholdCheck && resizeThresholdAllScales && resizeThresholdLongList && resizeThresholdExactRows && manualHeightCanExceedAutomaticDefault;
         Console.WriteLine("{\"t\":\"selftest\",\"pass\":" + (passed ? "true" : "false")
             + ",\"checks\":{\"checkbox\":" + JsonBool(checkbox)
             + ",\"position\":" + JsonBool(position)
@@ -2523,8 +2969,17 @@ public sealed class DshNotifyGui : Form
             + ",\"settingsScaleNoDrift\":" + JsonBool(settingsScaleNoDrift)
             + ",\"settingsChildrenFit\":" + JsonBool(settingsChildrenFit)
             + ",\"providerScaleStable\":" + JsonBool(providerScaleStable)
+            + ",\"resizeThreshold\":" + JsonBool(resizeThresholdCheck)
+            + ",\"resizeThresholdAllScales\":" + JsonBool(resizeThresholdAllScales)
+            + ",\"resizeThresholdLongList\":" + JsonBool(resizeThresholdLongList)
+            + ",\"resizeThresholdExactRows\":" + JsonBool(resizeThresholdExactRows)
+            + ",\"manualHeightCanExceedAutomaticDefault\":" + JsonBool(manualHeightCanExceedAutomaticDefault)
             + ",\"explicitLightTheme\":" + JsonBool(explicitLightTheme)
             + ",\"systemThemeDoesNotOverwriteLegacy\":" + JsonBool(systemThemeDoesNotOverwriteLegacy)
+            + ",\"settingsNoScrollbars\":" + JsonBool(settingsNoScrollbars)
+            + ",\"settingsPagingKeepsLimitRowsReachable\":" + JsonBool(settingsPagingKeepsLimitRowsReachable)
+            + ",\"settingsFitsWorkingAreaAtAllScales\":" + JsonBool(settingsFitsWorkingAreaAtAllScales)
+            + ",\"settingsThemesKeepLayoutStable\":" + JsonBool(settingsThemesKeepLayoutStable)
             + ",\"moveEmitted\":" + JsonBool(moveEmitted)
             + ",\"moveStored\":" + JsonBool(moveStored)
             + ",\"noEcho\":" + JsonBool(noEcho)
